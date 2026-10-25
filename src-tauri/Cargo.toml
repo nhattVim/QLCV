@@ -28,6 +28,8 @@ bson = { version = "2.13", features = ["chrono-0_4"] }
 chrono = { version = "0.4", features = ["serde"] }
 bcrypt = "0.17"
 dotenvy = "0.15"
+rust-s3 = { version = "0.35", default-features = false, features = ["tokio-rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -151,6 +151,7 @@
       :current-user="currentUser"
       @close="showTaskModal = false"
       @save="onSaveTask"
+      @attachment-changed="onAttachmentChanged"
     />
 
     <!-- User Modal -->
@@ -348,6 +349,18 @@ function openViewTaskModal(task) {
 function openEditTaskModal(task) {
   selectedTask.value = { ...task };
   showTaskModal.value = true;
+}
+
+function onAttachmentChanged({ taskId, attachments }) {
+  if (taskId) {
+    const task = tasks.value.find((t) => t.id === taskId);
+    if (task) {
+      task.attachments = [...attachments];
+    }
+    if (selectedTask.value && selectedTask.value.id === taskId) {
+      selectedTask.value.attachments = [...attachments];
+    }
+  }
 }
 
 async function onSaveTask(taskFormData) {

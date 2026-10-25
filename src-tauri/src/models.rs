@@ -13,6 +13,19 @@ pub struct UserSafe {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskAttachment {
+    pub id: String,
+    pub file_name: String,
+    pub file_size: u64,
+    pub content_type: String,
+    pub object_key: String,
+    pub uploaded_by: String,
+    pub uploaded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TaskDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -28,6 +41,8 @@ pub struct TaskDto {
     pub remind_before_days: Option<i32>,
     pub remind_at: Option<String>,
     pub reminded_at: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<TaskAttachment>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

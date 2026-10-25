@@ -66,7 +66,8 @@ export const api = {
       priority: taskData.priority || 'Medium',
       dueDate: taskData.due_date || null,
       createdBy: taskData.created_by || 'Admin',
-      remindBeforeDays: taskData.remind_before_days || 2
+      remindBeforeDays: taskData.remind_before_days || 2,
+      attachments: taskData.attachments || []
     });
   },
 
@@ -79,7 +80,8 @@ export const api = {
       priority: taskData.priority || 'Medium',
       dueDate: taskData.due_date || null,
       status: taskData.status || 'TODO',
-      remindBeforeDays: taskData.remind_before_days || 2
+      remindBeforeDays: taskData.remind_before_days || 2,
+      attachments: taskData.attachments !== undefined ? taskData.attachments : null
     });
   },
 
@@ -94,5 +96,52 @@ export const api = {
   // Dashboard stats
   async getDashboardStats(forUser = null) {
     return await invoke('get_dashboard_stats', { forUser: forUser || null });
+  },
+
+  // Storage & Attachments (Cloudflare R2 / S3)
+  async isStorageConfigured() {
+    try {
+      return await invoke('is_storage_configured');
+    } catch {
+      return false;
+    }
+  },
+
+  async uploadAttachment(taskId, fileName, fileData, contentType, uploadedBy) {
+    let bytes;
+    if (fileData instanceof Uint8Array) {
+      bytes = Array.from(fileData);
+    } else if (fileData instanceof ArrayBuffer) {
+      bytes = Array.from(new Uint8Array(fileData));
+    } else if (Array.isArray(fileData)) {
+      bytes = fileData;
+    } else {
+      bytes = [];
+    }
+
+    return await invoke('upload_attachment', {
+      taskId: taskId || null,
+      fileName,
+      fileData: bytes,
+      contentType: contentType || 'application/octet-stream',
+      uploadedBy: uploadedBy || 'Người dùng'
+    });
+  },
+
+  async deleteAttachment(taskId, attachmentId, objectKey) {
+    return await invoke('delete_attachment', {
+      taskId: taskId || null,
+      attachmentId,
+      objectKey
+    });
+  },
+
+  async getAttachmentUrl(objectKey) {
+    return await invoke('get_attachment_url', { objectKey });
+  },
+
+  async openAttachment(objectKey, fileName) {
+    return await invoke('open_attachment', { objectKey, fileName });
   }
 };
+

@@ -151,7 +151,12 @@
           <tr v-for="task in filteredTasks" :key="task.id">
             <td class="cell-id">#{{ task.id ? task.id.slice(-4) : '' }}</td>
             <td class="cell-title">
-              <div class="tbl-title" @click="$emit('view-task', task)">{{ task.title }}</div>
+              <div class="tbl-title" @click="$emit('view-task', task)">
+                {{ task.title }}
+                <span v-if="task.attachments && task.attachments.length > 0" class="tbl-att-badge" :title="`${task.attachments.length} tệp đính kèm`">
+                  📎 {{ task.attachments.length }}
+                </span>
+              </div>
               <div v-if="plainDescription(task.description)" class="tbl-desc">{{ plainDescription(task.description) }}</div>
             </td>
             <td>
@@ -350,7 +355,7 @@ function formatDueDate(dueStr) {
   try {
     const d = new Date(dueStr);
     const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+    return `${pad(d.getHours())}:${pad(d.getMinutes())} - ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
   } catch {
     return dueStr;
   }
@@ -637,6 +642,19 @@ function isOverdue(task) {
 .tbl-title:hover {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.tbl-att-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background-color: var(--accent-sub);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  vertical-align: middle;
 }
 
 .tbl-desc {

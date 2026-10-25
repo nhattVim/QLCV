@@ -27,12 +27,17 @@
 
     <!-- Due Date & Assignee (Inline Jira/Trello Style, No Clutter) -->
     <div class="card-inline-meta">
-      <span class="meta-date" :class="{ 'overdue-text': isOverdue, 'near-text': isNearDeadline }">
+      <span class="meta-date" :class="{ 'overdue-text': isOverdue, 'near-text': isNearDeadline }" :title="'Thời hạn hoàn thành: ' + fullFormattedDueDate">
         📅 {{ formattedDueDate }}
       </span>
-      <span class="meta-assignee" :title="assigneesTooltip">
-        👤 {{ assigneesShort }}
-      </span>
+      <div class="meta-right">
+        <span v-if="task.attachments && task.attachments.length > 0" class="meta-attachments" :title="`${task.attachments.length} tệp đính kèm`">
+          📎 {{ task.attachments.length }}
+        </span>
+        <span class="meta-assignee" :title="assigneesTooltip">
+          👤 {{ assigneesShort }}
+        </span>
+      </div>
     </div>
 
     <!-- Workflow Move Actions Row -->
@@ -200,7 +205,16 @@ const formattedDueDate = computed(() => {
   if (!dueDateTime.value) return 'Không hạn';
   const d = dueDateTime.value;
   const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${time} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+});
+
+const fullFormattedDueDate = computed(() => {
+  if (!dueDateTime.value) return 'Không có thời hạn';
+  const d = dueDateTime.value;
+  const pad = (n) => String(n).padStart(2, '0');
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${time} ngày ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 });
 
 const shortId = computed(() => {
@@ -365,6 +379,24 @@ function moveStatus(newStatus) {
 .near-text {
   color: var(--warning);
   font-weight: 700;
+}
+
+.meta-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.meta-attachments {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+  background-color: var(--accent-sub);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .meta-assignee {

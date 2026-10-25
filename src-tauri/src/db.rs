@@ -6,8 +6,9 @@ use mongodb::{
     Client, Database,
 };
 use chrono::{DateTime, Duration, Utc};
-use crate::models::{DashboardStats, TaskDto, UserSafe};
+use crate::models::{DashboardStats, TaskAttachment, TaskDto, UserSafe};
 
+#[allow(dead_code)]
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded_cfg.rs"));
 }
@@ -379,12 +380,18 @@ impl DbState {
         due_date: Option<String>,
         created_by: &str,
         remind_before_days: Option<i32>,
+        attachments: Option<Vec<TaskAttachment>>,
     ) -> Result<TaskDto, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("tasks");
 
         let now = Utc::now();
         let days = clamp_remind_days(remind_before_days);
+        let atts_bson = match attachments {
+            Some(atts) => Bson::Array(atts.into_iter().map(Self::attachment_to_doc).map(Bson::Document).collect()),
+            None => Bson::Array(Vec::new()),
+        };
+
         let mut new_doc = doc! {
             "title": title.trim(),
             "description": description,
@@ -394,7 +401,8 @@ impl DbState {
             "created_by": created_by,
             "created_at": mongodb::bson::DateTime::from_chrono(now),
             "updated_at": mongodb::bson::DateTime::from_chrono(now),
-            "remind_before_days": days
+            "remind_before_days": days,
+            "attachments": atts_bson,
         };
 
         if let Some(due_str) = due_date {
@@ -422,6 +430,7 @@ impl DbState {
         due_date: Option<String>,
         status: &str,
         remind_before_days: Option<i32>,
+        attachments: Option<Vec<TaskAttachment>>,
     ) -> Result<bool, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("tasks");
@@ -447,6 +456,11 @@ impl DbState {
             "updated_at": mongodb::bson::DateTime::from_chrono(now),
             "remind_before_days": days
         };
+
+        if let Some(atts) = attachments {
+            let atts_bson = Bson::Array(atts.into_iter().map(Self::attachment_to_doc).map(Bson::Document).collect());
+            update_doc.insert("attachments", atts_bson);
+        }
 
         if let Some(due_str) = due_date {
             if let Some(due_utc) = parse_due_date(&due_str) {
@@ -479,6 +493,41 @@ impl DbState {
             .map_err(|e| format!("Lỗi cập nhật công việc: {}", e))?;
 
         Ok(res.matched_count > 0)
+    }
+
+    pub async fn add_task_attachment(&self, task_id: &str, attachment: TaskAttachment) -> Result<(), String> {
+        let db = self.get_db().await?;
+        let col = db.collection::<Document>("tasks");
+        let oid = ObjectId::parse_str(task_id).map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
+
+        let att_doc = Self::attachment_to_doc(attachment);
+        let now = Utc::now();
+        col.update_one(
+            doc! { "_id": oid },
+            doc! {
+                "$push": { "attachments": att_doc },
+                "$set": { "updated_at": mongodb::bson::DateTime::from_chrono(now) }
+            }
+        ).await.map_err(|e| format!("Lỗi thêm đính kèm: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn remove_task_attachment(&self, task_id: &str, attachment_id: &str) -> Result<(), String> {
+        let db = self.get_db().await?;
+        let col = db.collection::<Document>("tasks");
+        let oid = ObjectId::parse_str(task_id).map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
+
+        let now = Utc::now();
+        col.update_one(
+            doc! { "_id": oid },
+            doc! {
+                "$pull": { "attachments": { "id": attachment_id } },
+                "$set": { "updated_at": mongodb::bson::DateTime::from_chrono(now) }
+            }
+        ).await.map_err(|e| format!("Lỗi xóa đính kèm: {}", e))?;
+
+        Ok(())
     }
 
     pub async fn update_task_status(&self, id: &str, status: &str) -> Result<bool, String> {
@@ -547,6 +596,19 @@ impl DbState {
         Ok(stats)
     }
 
+    pub fn attachment_to_doc(att: TaskAttachment) -> Document {
+        doc! {
+            "id": att.id,
+            "file_name": att.file_name,
+            "file_size": att.file_size as i64,
+            "content_type": att.content_type,
+            "object_key": att.object_key,
+            "uploaded_by": att.uploaded_by,
+            "uploaded_at": att.uploaded_at,
+            "download_url": att.download_url.unwrap_or_default(),
+        }
+    }
+
     // Helper: Convert Document to TaskDto
     fn doc_to_task(doc: Document) -> TaskDto {
         let id = doc.get_object_id("_id").ok().map(|oid| oid.to_hex());
@@ -598,6 +660,31 @@ impl DbState {
             _ => None,
         };
 
+        let attachments = match doc.get("attachments") {
+            Some(Bson::Array(arr)) => arr.iter().filter_map(|b| {
+                if let Bson::Document(d) = b {
+                    let dl = d.get_str("download_url").ok().filter(|s| !s.is_empty()).map(|s| s.to_string());
+                    Some(TaskAttachment {
+                        id: d.get_str("id").unwrap_or_default().to_string(),
+                        file_name: d.get_str("file_name").unwrap_or_default().to_string(),
+                        file_size: d.get_i64("file_size").ok().map(|v| v as u64).unwrap_or(0),
+                        content_type: d.get_str("content_type").unwrap_or("application/octet-stream").to_string(),
+                        object_key: d.get_str("object_key").unwrap_or_default().to_string(),
+                        uploaded_by: d.get_str("uploaded_by").unwrap_or_default().to_string(),
+                        uploaded_at: match d.get("uploaded_at") {
+                            Some(Bson::DateTime(dt)) => dt.to_chrono().to_rfc3339(),
+                            Some(Bson::String(s)) => s.clone(),
+                            _ => String::new(),
+                        },
+                        download_url: dl,
+                    })
+                } else {
+                    None
+                }
+            }).collect(),
+            _ => Vec::new(),
+        };
+
         TaskDto {
             id,
             title,
@@ -612,6 +699,7 @@ impl DbState {
             remind_before_days,
             remind_at,
             reminded_at,
+            attachments,
         }
     }
 }

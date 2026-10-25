@@ -1,8 +1,9 @@
 mod models;
 mod db;
+mod storage;
 
 use db::DbState;
-use models::{DashboardStats, TaskDto, UserSafe};
+use models::{DashboardStats, TaskAttachment, TaskDto, UserSafe};
 use tauri::State;
 
 #[tauri::command]
@@ -75,6 +76,7 @@ async fn create_task(
     due_date: Option<String>,
     created_by: String,
     remind_before_days: Option<i32>,
+    attachments: Option<Vec<TaskAttachment>>,
 ) -> Result<TaskDto, String> {
     state
         .create_task(
@@ -85,6 +87,7 @@ async fn create_task(
             due_date,
             &created_by,
             remind_before_days,
+            attachments,
         )
         .await
 }
@@ -100,6 +103,7 @@ async fn update_task(
     due_date: Option<String>,
     status: String,
     remind_before_days: Option<i32>,
+    attachments: Option<Vec<TaskAttachment>>,
 ) -> Result<bool, String> {
     state
         .update_task(
@@ -111,6 +115,7 @@ async fn update_task(
             due_date,
             &status,
             remind_before_days,
+            attachments,
         )
         .await
 }
@@ -135,6 +140,63 @@ async fn get_dashboard_stats(
     for_user: Option<String>,
 ) -> Result<DashboardStats, String> {
     state.get_dashboard_stats(for_user).await
+}
+
+// ==========================================
+// ATTACHMENT COMMANDS (CLOUDFLARE R2 / S3)
+// ==========================================
+
+#[tauri::command]
+async fn is_storage_configured() -> Result<bool, String> {
+    Ok(storage::is_storage_configured())
+}
+
+#[tauri::command]
+async fn upload_attachment(
+    state: State<'_, DbState>,
+    task_id: Option<String>,
+    file_name: String,
+    file_data: Vec<u8>,
+    content_type: String,
+    uploaded_by: String,
+) -> Result<TaskAttachment, String> {
+    let att = storage::upload_attachment(&file_name, &file_data, &content_type, &uploaded_by).await?;
+
+    if let Some(tid) = task_id {
+        if !tid.trim().is_empty() {
+            state.add_task_attachment(&tid, att.clone()).await?;
+        }
+    }
+
+    Ok(att)
+}
+
+#[tauri::command]
+async fn delete_attachment(
+    state: State<'_, DbState>,
+    task_id: Option<String>,
+    attachment_id: String,
+    object_key: String,
+) -> Result<bool, String> {
+    let _ = storage::delete_attachment(&object_key).await?;
+
+    if let Some(tid) = task_id {
+        if !tid.trim().is_empty() {
+            state.remove_task_attachment(&tid, &attachment_id).await?;
+        }
+    }
+
+    Ok(true)
+}
+
+#[tauri::command]
+async fn get_attachment_url(object_key: String) -> Result<String, String> {
+    storage::get_attachment_download_url(&object_key).await
+}
+
+#[tauri::command]
+async fn open_attachment(object_key: String, file_name: String) -> Result<String, String> {
+    storage::open_attachment_in_viewer(&object_key, &file_name).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -168,6 +230,11 @@ pub fn run() {
             update_task_status,
             delete_task,
             get_dashboard_stats,
+            is_storage_configured,
+            upload_attachment,
+            delete_attachment,
+            get_attachment_url,
+            open_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

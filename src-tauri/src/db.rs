@@ -312,11 +312,22 @@ impl DbState {
 
     pub async fn delete_user(&self, email: &str) -> Result<bool, String> {
         let db = self.get_db().await?;
-        let col = db.collection::<Document>("users");
+        let normalized_email = email.trim().to_lowercase();
 
-        let filter = doc! { "email": email.trim().to_lowercase() };
+        // 1. Delete user from users collection
+        let col = db.collection::<Document>("users");
+        let filter = doc! { "email": &normalized_email };
         let res = col.delete_one(filter).await
             .map_err(|e| format!("Lỗi xóa cán bộ: {}", e))?;
+
+        // 2. Remove user from assigned_to array in all tasks
+        let tasks_col = db.collection::<Document>("tasks");
+        let task_filter = doc! { "assigned_to": &normalized_email };
+        let task_update = doc! {
+            "$pull": { "assigned_to": &normalized_email }
+        };
+        let _ = tasks_col.update_many(task_filter, task_update).await
+            .map_err(|e| format!("Lỗi gỡ cán bộ khỏi các công việc: {}", e))?;
 
         Ok(res.deleted_count > 0)
     }

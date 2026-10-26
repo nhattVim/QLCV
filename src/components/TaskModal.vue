@@ -353,7 +353,8 @@ onMounted(async () => {
     form.description = props.taskData.description || '';
     form.priority = props.taskData.priority || 'Medium';
     form.status = props.taskData.status || 'TODO';
-    form.assigned_to = [...(props.taskData.assigned_to || [])];
+    const validEmails = new Set((props.users || []).map((u) => u.email));
+    form.assigned_to = (props.taskData.assigned_to || []).filter((email) => validEmails.has(email));
     form.remind_before_days = props.taskData.remind_before_days || 2;
     attachments.value = [...(props.taskData.attachments || [])];
 

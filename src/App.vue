@@ -215,6 +215,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { getVersion } from '@tauri-apps/api/app';
 import { check } from '@tauri-apps/plugin-updater';
 import { api } from './api.js';
 
@@ -330,6 +331,13 @@ onMounted(async () => {
 
   // Keyboard shortcut listeners
   window.addEventListener('keydown', onKeyDown);
+
+  // Read app version
+  try {
+    currentAppVersion.value = await getVersion();
+  } catch (e) {
+    console.warn('Could not get app version:', e);
+  }
 
   // Auto check for updates on startup & every 30 mins
   checkForAppUpdates(true);
@@ -551,11 +559,11 @@ async function toggleUserStatus(user) {
 
 function confirmDeleteUser(user) {
   confirmDialog.title = 'Xác nhận xóa tài khoản Cán bộ';
-  confirmDialog.message = `Bạn có chắc chắn muốn xóa tài khoản cán bộ: "${user.full_name} (${user.email})"?`;
+  confirmDialog.message = `Bạn có chắc chắn muốn xóa tài khoản cán bộ: "${user.full_name} (${user.email})"?\n\nLưu ý: Cán bộ này cũng sẽ tự động được gỡ bỏ khỏi tất cả các công việc đang được phân công.`;
   confirmDialog.action = async () => {
     try {
       await api.deleteUser(user.email);
-      toastRef.value?.success('Đã xóa cán bộ thành công!');
+      toastRef.value?.success('Đã xóa cán bộ và gỡ khỏi tất cả công việc liên quan!');
       await refreshData();
     } catch (err) {
       toastRef.value?.error('Lỗi khi xóa cán bộ!');

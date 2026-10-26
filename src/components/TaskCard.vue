@@ -187,6 +187,12 @@ const assigneesList = computed(() => {
   if (!props.task.assigned_to || props.task.assigned_to.length === 0) {
     return [];
   }
+  const hasUsers = Object.keys(props.userMap).length > 0;
+  if (hasUsers) {
+    return props.task.assigned_to
+      .filter(email => Boolean(props.userMap[email]))
+      .map(email => props.userMap[email]);
+  }
   return props.task.assigned_to.map(email => props.userMap[email] || email);
 });
 

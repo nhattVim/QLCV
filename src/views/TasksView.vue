@@ -340,7 +340,11 @@ function getStatusText(st) {
 
 function getAssigneesText(assignees) {
   if (!assignees || assignees.length === 0) return 'Chưa phân công';
-  return assignees.map(e => props.userMap[e] || e).join(', ');
+  const hasUsers = Object.keys(props.userMap).length > 0;
+  const list = hasUsers
+    ? assignees.filter(e => Boolean(props.userMap[e])).map(e => props.userMap[e])
+    : assignees.map(e => props.userMap[e] || e);
+  return list.length > 0 ? list.join(', ') : 'Chưa phân công';
 }
 
 function plainDescription(html) {

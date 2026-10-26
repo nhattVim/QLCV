@@ -52,7 +52,7 @@ jobs:
           S3_REGION: ${{ secrets.S3_REGION }}
           S3_PUBLIC_DOMAIN: ${{ secrets.S3_PUBLIC_DOMAIN }}
         with:
-          tagName: __VERSION__
+          tagName: v__VERSION__
           releaseName: 'QLCV v__VERSION__'
           releaseBody: |
             ## 🚀 Phiên bản mới QLCV v__VERSION__

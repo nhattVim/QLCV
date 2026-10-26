@@ -16,9 +16,9 @@ echo.
 echo =====================================================================
 set /p CHOICE="Vui long chon [1-3]: "
 
-if "%CHOICE%"=="1" goto RELEASE
-if "%CHOICE%"=="2" goto DELETE_RELEASE
-if "%CHOICE%"=="3" goto EXIT
+if "!CHOICE!"=="1" goto RELEASE
+if "!CHOICE!"=="2" goto DELETE_RELEASE
+if "!CHOICE!"=="3" goto EXIT
 goto MENU
 
 :RELEASE
@@ -105,10 +105,10 @@ git fetch --tags --prune-tags origin >nul 2>&1
 set "TAG_COUNT=0"
 for /f "tokens=*" %%T in ('git tag -l') do (
     set /a TAG_COUNT+=1
-    set "TAG[!TAG_COUNT!]=%%T"
+    set "TAG_!TAG_COUNT!=%%T"
 )
 
-if %TAG_COUNT% equ 0 (
+if !TAG_COUNT! equ 0 (
     echo.
     echo [Thong bao] Khong tim thay Git Tag nao tren may va GitHub!
     echo.
@@ -119,9 +119,7 @@ if %TAG_COUNT% equ 0 (
 echo.
 echo Danh sach Git Tag hien co:
 echo ---------------------------------------------------------------------
-for /l %%I in (1,1,%TAG_COUNT%) do (
-    echo   [%%I] !TAG[%%I]!
-)
+call :PRINT_TAGS !TAG_COUNT!
 echo ---------------------------------------------------------------------
 echo   [0]   Quay lai Menu chinh
 echo   [ALL] Xoa tat ca cac tag tren
@@ -135,14 +133,12 @@ if "!SEL!"=="0" goto MENU
 
 set "SELECTED_TAGS="
 if /i "!SEL!"=="all" (
-    for /l %%I in (1,1,%TAG_COUNT%) do (
-        set "SELECTED_TAGS=!SELECTED_TAGS! !TAG[%%I]!"
-    )
+    call :SELECT_ALL_TAGS !TAG_COUNT!
 ) else (
     set "NORMALIZED_SEL=!SEL:,= !"
     for %%N in (!NORMALIZED_SEL!) do (
-        if defined TAG[%%N] (
-            set "SELECTED_TAGS=!SELECTED_TAGS! !TAG[%%N]!"
+        if defined TAG_%%N (
+            set "SELECTED_TAGS=!SELECTED_TAGS! !TAG_%%N!"
         )
     )
 )
@@ -156,7 +152,7 @@ if "!SELECTED_TAGS!"=="" (
 )
 
 echo.
-echo CANH BAO: Cac Git Tag sau day se bi xoa vinh vien:
+echo CANH BAO: Cac Git Tag sau day se bi xoa vinh vien tren MAY va GITHUB:
 for %%T in (!SELECTED_TAGS!) do (
     echo   - %%T
 )
@@ -165,15 +161,17 @@ set "CONFIRM_DEL="
 set /p CONFIRM_DEL="Ban co chac chan 100%% muon xoa cac tag tren? (y/n): "
 if /i not "!CONFIRM_DEL!"=="y" goto MENU
 
+set "HAS_GH=0"
+where gh >nul 2>&1 && set "HAS_GH=1"
+
 echo.
 echo Dang tien hanh xoa...
 for %%T in (!SELECTED_TAGS!) do (
     echo.
-    echo >> Dang xoa tag: %%T
+    echo -- Dang xoa tag: %%T
     git tag -d %%T >nul 2>&1
     git push origin --delete %%T
-    where gh >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
+    if "!HAS_GH!"=="1" (
         gh release delete %%T --yes --cleanup-tag >nul 2>&1
     )
 )
@@ -185,6 +183,18 @@ echo =====================================================================
 echo.
 pause
 goto MENU
+
+:PRINT_TAGS
+for /l %%I in (1,1,%1) do (
+    echo   [%%I] !TAG_%%I!
+)
+exit /b
+
+:SELECT_ALL_TAGS
+for /l %%I in (1,1,%1) do (
+    set "SELECTED_TAGS=!SELECTED_TAGS! !TAG_%%I!"
+)
+exit /b
 
 :EXIT
 exit /b 0

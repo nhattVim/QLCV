@@ -6,7 +6,7 @@ use mongodb::{
     Client, Database,
 };
 use chrono::{DateTime, Duration, Utc};
-use crate::models::{DashboardStats, TaskAttachment, TaskDto, UserSafe};
+use crate::models::{DashboardStats, TaskAttachment, TaskDto, TeamDto, UserSafe, WorkspaceDto};
 
 #[allow(dead_code)]
 mod embedded {
@@ -31,6 +31,7 @@ fn resolve_mongo_uri() -> String {
 }
 
 fn resolve_db_name() -> String {
+    let _ = dotenvy::dotenv();
     std::env::var("DB_NAME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -42,6 +43,30 @@ fn resolve_db_name() -> String {
                 name
             }
         })
+}
+
+fn resolve_default_admin_email() -> String {
+    let _ = dotenvy::dotenv();
+    std::env::var("DEFAULT_ADMIN_EMAIL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| xor_decode(embedded::EMBED_ADMIN_EMAIL, embedded::EMBED_KEY))
+}
+
+fn resolve_default_admin_password() -> String {
+    let _ = dotenvy::dotenv();
+    std::env::var("DEFAULT_ADMIN_PASSWORD")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| xor_decode(embedded::EMBED_ADMIN_PASSWORD, embedded::EMBED_KEY))
+}
+
+fn resolve_default_admin_name() -> String {
+    let _ = dotenvy::dotenv();
+    std::env::var("DEFAULT_ADMIN_NAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| xor_decode(embedded::EMBED_ADMIN_NAME, embedded::EMBED_KEY))
 }
 
 fn parse_due_date(due_str: &str) -> Option<DateTime<Utc>> {
@@ -96,6 +121,8 @@ fn reminder_schedule_changed(
 pub struct DbState {
     pub db: Arc<RwLock<Option<Database>>>,
     pub current_uri: Arc<RwLock<String>>,
+    pub is_initializing: Arc<RwLock<bool>>,
+    pub init_error: Arc<RwLock<Option<String>>>,
 }
 
 impl DbState {
@@ -103,15 +130,37 @@ impl DbState {
         Self {
             db: Arc::new(RwLock::new(None)),
             current_uri: Arc::new(RwLock::new(String::new())),
+            is_initializing: Arc::new(RwLock::new(true)),
+            init_error: Arc::new(RwLock::new(None)),
         }
     }
 
     pub async fn init(&self) -> Result<(), String> {
+        *self.is_initializing.write().await = true;
+        *self.init_error.write().await = None;
+
         let uri = resolve_mongo_uri();
         if uri.is_empty() {
-            return Err("Thiếu cấu hình kết nối MongoDB.".to_string());
+            let err = "Thiếu cấu hình kết nối MongoDB.".to_string();
+            *self.init_error.write().await = Some(err.clone());
+            *self.is_initializing.write().await = false;
+            return Err(err);
         }
-        self.connect(&uri).await
+
+        match self.connect(&uri).await {
+            Ok(_) => {
+                if let Err(e) = self.init_default_data().await {
+                    eprintln!("[DB Warning] init_default_data error: {}", e);
+                }
+                *self.is_initializing.write().await = false;
+                Ok(())
+            }
+            Err(e) => {
+                *self.init_error.write().await = Some(e.clone());
+                *self.is_initializing.write().await = false;
+                Err(e)
+            }
+        }
     }
 
     pub async fn connect(&self, uri: &str) -> Result<(), String> {
@@ -146,11 +195,432 @@ impl DbState {
     }
 
     async fn get_db(&self) -> Result<Database, String> {
-        let db_lock = self.db.read().await;
-        match &*db_lock {
-            Some(db) => Ok(db.clone()),
-            None => Err("Chưa kết nối đến cơ sở dữ liệu MongoDB Atlas!".to_string()),
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let db_lock = self.db.read().await;
+                if let Some(ref db) = *db_lock {
+                    return Ok(db.clone());
+                }
+            }
+
+            let is_init = *self.is_initializing.read().await;
+            let err_opt = self.init_error.read().await.clone();
+
+            if !is_init && err_opt.is_some() {
+                return Err(format!("Lỗi kết nối MongoDB Atlas: {}", err_opt.unwrap()));
+            }
+
+            if start.elapsed() > std::time::Duration::from_secs(15) {
+                return Err("Quá thời gian chờ kết nối MongoDB Atlas (15s)!".to_string());
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
         }
+    }
+
+    // ==========================================
+    // AUTO-MIGRATION & DEFAULT DATA INITIALIZATION
+    // ==========================================
+
+    pub async fn init_default_data(&self) -> Result<(), String> {
+        let db = self.get_db().await?;
+        let users_col = db.collection::<Document>("users");
+        let teams_col = db.collection::<Document>("teams");
+        let workspaces_col = db.collection::<Document>("workspaces");
+        let tasks_col = db.collection::<Document>("tasks");
+
+        let now = Utc::now();
+
+        // 1. Super Admin setup from .env
+        let admin_email = resolve_default_admin_email().trim().to_lowercase();
+        let admin_pass = resolve_default_admin_password();
+        let admin_name = resolve_default_admin_name();
+
+        if !admin_email.is_empty() {
+            let existing_admin = users_col.find_one(doc! { "email": &admin_email }).await.map_err(|e| e.to_string())?;
+            if let Some(doc) = existing_admin {
+                // Ensure role is super_admin
+                let current_role = doc.get_str("role").unwrap_or_default();
+                if current_role != "super_admin" {
+                    let _ = users_col.update_one(
+                        doc! { "email": &admin_email },
+                        doc! { "$set": { "role": "super_admin" } }
+                    ).await;
+                }
+            } else {
+                // Create super admin
+                if let Ok(hashed) = bcrypt::hash(&admin_pass, bcrypt::DEFAULT_COST) {
+                    let _ = users_col.insert_one(doc! {
+                        "email": &admin_email,
+                        "password_hash": hashed,
+                        "full_name": &admin_name,
+                        "role": "super_admin",
+                        "is_active": true,
+                        "created_at": mongodb::bson::DateTime::from_chrono(now)
+                    }).await;
+                }
+            }
+        }
+
+        // 2. Default Team check/create
+        let first_team = teams_col.find_one(doc! {}).await.map_err(|e| e.to_string())?;
+        let default_team_id = match first_team {
+            Some(t) => t.get_object_id("_id").ok().map(|oid| oid.to_hex()).unwrap_or_default(),
+            None => {
+                let res = teams_col.insert_one(doc! {
+                    "name": "Đội ngũ chính",
+                    "description": "Team mặc định cho toàn bộ thành viên hệ thống",
+                    "created_at": mongodb::bson::DateTime::from_chrono(now),
+                    "updated_at": mongodb::bson::DateTime::from_chrono(now)
+                }).await.map_err(|e| e.to_string())?;
+                res.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default()
+            }
+        };
+
+        // 3. Default Workspace check/create for default team
+        if !default_team_id.is_empty() {
+            let first_workspace = workspaces_col.find_one(doc! { "team_id": &default_team_id }).await.map_err(|e| e.to_string())?;
+            let default_ws_id = match first_workspace {
+                Some(ws) => ws.get_object_id("_id").ok().map(|oid| oid.to_hex()).unwrap_or_default(),
+                None => {
+                    let res = workspaces_col.insert_one(doc! {
+                        "team_id": &default_team_id,
+                        "name": "Không gian chung",
+                        "description": "Không gian công việc chung mặc định của đội ngũ",
+                        "created_by": &admin_email,
+                        "created_at": mongodb::bson::DateTime::from_chrono(now),
+                        "updated_at": mongodb::bson::DateTime::from_chrono(now)
+                    }).await.map_err(|e| e.to_string())?;
+                    res.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default()
+                }
+            };
+
+            // 4. Migrate users without team_id (except super_admin)
+            let _ = users_col.update_many(
+                doc! {
+                    "role": { "$ne": "super_admin" },
+                    "$or": [
+                        { "team_id": { "$exists": false } },
+                        { "team_id": Bson::Null },
+                        { "team_id": "" }
+                    ]
+                },
+                doc! { "$set": { "team_id": &default_team_id } }
+            ).await;
+
+            // 5. Migrate tasks without team_id
+            let _ = tasks_col.update_many(
+                doc! {
+                    "$or": [
+                        { "team_id": { "$exists": false } },
+                        { "team_id": Bson::Null },
+                        { "team_id": "" }
+                    ]
+                },
+                doc! { "$set": { "team_id": &default_team_id } }
+            ).await;
+
+            // 6. Migrate tasks without workspace_id
+            if !default_ws_id.is_empty() {
+                let _ = tasks_col.update_many(
+                    doc! {
+                        "$or": [
+                            { "workspace_id": { "$exists": false } },
+                            { "workspace_id": Bson::Null },
+                            { "workspace_id": "" }
+                        ]
+                    },
+                    doc! { "$set": { "workspace_id": &default_ws_id } }
+                ).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    // ==========================================
+    // TEAMS CRUD
+    // ==========================================
+
+    pub async fn get_teams(&self) -> Result<Vec<TeamDto>, String> {
+        let db = self.get_db().await?;
+        let teams_col = db.collection::<Document>("teams");
+        let users_col = db.collection::<Document>("users");
+        let ws_col = db.collection::<Document>("workspaces");
+        let tasks_col = db.collection::<Document>("tasks");
+
+        let mut cursor = teams_col.find(doc! {})
+            .await
+            .map_err(|e| format!("Lỗi tải danh sách team: {}", e))?;
+
+        let mut teams = Vec::new();
+        while cursor.advance().await.map_err(|e| e.to_string())? {
+            let doc = cursor.deserialize_current().map_err(|e| e.to_string())?;
+            let id = doc.get_object_id("_id").ok().map(|oid| oid.to_hex());
+            let name = doc.get_str("name").unwrap_or_default().to_string();
+            let description = doc.get_str("description").unwrap_or_default().to_string();
+
+            let created_at = match doc.get("created_at") {
+                Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
+                Some(Bson::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+
+            let updated_at = match doc.get("updated_at") {
+                Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
+                Some(Bson::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+
+            let mut member_count = 0;
+            let mut workspace_count = 0;
+            let mut task_count = 0;
+
+            if let Some(ref tid) = id {
+                member_count = users_col.count_documents(doc! { "team_id": tid }).await.unwrap_or(0) as usize;
+                workspace_count = ws_col.count_documents(doc! { "team_id": tid }).await.unwrap_or(0) as usize;
+                task_count = tasks_col.count_documents(doc! { "team_id": tid }).await.unwrap_or(0) as usize;
+            }
+
+            teams.push(TeamDto {
+                id,
+                name,
+                description,
+                created_at,
+                updated_at,
+                member_count,
+                workspace_count,
+                task_count,
+            });
+        }
+
+        Ok(teams)
+    }
+
+    pub async fn create_team(&self, name: &str, description: &str) -> Result<TeamDto, String> {
+        let db = self.get_db().await?;
+        let teams_col = db.collection::<Document>("teams");
+        let ws_col = db.collection::<Document>("workspaces");
+
+        let now = Utc::now();
+        let new_doc = doc! {
+            "name": name.trim(),
+            "description": description.trim(),
+            "created_at": mongodb::bson::DateTime::from_chrono(now),
+            "updated_at": mongodb::bson::DateTime::from_chrono(now),
+        };
+
+        let res = teams_col.insert_one(new_doc).await
+            .map_err(|e| format!("Lỗi tạo team: {}", e))?;
+
+        let id = res.inserted_id.as_object_id().map(|oid| oid.to_hex());
+
+        // Create default workspace for new team
+        if let Some(ref tid) = id {
+            let _ = ws_col.insert_one(doc! {
+                "team_id": tid,
+                "name": "Không gian chung",
+                "description": format!("Không gian công việc chung của {}", name.trim()),
+                "created_at": mongodb::bson::DateTime::from_chrono(now),
+                "updated_at": mongodb::bson::DateTime::from_chrono(now),
+            }).await;
+        }
+
+        Ok(TeamDto {
+            id,
+            name: name.trim().to_string(),
+            description: description.trim().to_string(),
+            created_at: Some(now.to_rfc3339()),
+            updated_at: Some(now.to_rfc3339()),
+            member_count: 0,
+            workspace_count: 1,
+            task_count: 0,
+        })
+    }
+
+    pub async fn update_team(&self, id: &str, name: &str, description: &str) -> Result<bool, String> {
+        let db = self.get_db().await?;
+        let teams_col = db.collection::<Document>("teams");
+
+        let oid = ObjectId::parse_str(id).map_err(|_| "Mã Team không hợp lệ!".to_string())?;
+        let now = Utc::now();
+
+        let update_doc = doc! {
+            "$set": {
+                "name": name.trim(),
+                "description": description.trim(),
+                "updated_at": mongodb::bson::DateTime::from_chrono(now),
+            }
+        };
+
+        teams_col.update_one(doc! { "_id": oid }, update_doc).await
+            .map_err(|e| format!("Lỗi cập nhật team: {}", e))?;
+
+        Ok(true)
+    }
+
+    pub async fn delete_team(&self, id: &str) -> Result<bool, String> {
+        let db = self.get_db().await?;
+        let teams_col = db.collection::<Document>("teams");
+        let ws_col = db.collection::<Document>("workspaces");
+        let tasks_col = db.collection::<Document>("tasks");
+        let users_col = db.collection::<Document>("users");
+
+        let oid = ObjectId::parse_str(id).map_err(|_| "Mã Team không hợp lệ!".to_string())?;
+
+        // 1. Delete team
+        teams_col.delete_one(doc! { "_id": oid }).await
+            .map_err(|e| format!("Lỗi xóa team: {}", e))?;
+
+        // 2. Delete all workspaces in team
+        let _ = ws_col.delete_many(doc! { "team_id": id }).await;
+
+        // 3. Delete all tasks in team
+        let _ = tasks_col.delete_many(doc! { "team_id": id }).await;
+
+        // 4. Clear team_id for users who were in this team
+        let _ = users_col.update_many(
+            doc! { "team_id": id },
+            doc! { "$set": { "team_id": Bson::Null } }
+        ).await;
+
+        Ok(true)
+    }
+
+    // ==========================================
+    // WORKSPACES CRUD
+    // ==========================================
+
+    pub async fn get_workspaces(&self, team_id: &str) -> Result<Vec<WorkspaceDto>, String> {
+        let db = self.get_db().await?;
+        let ws_col = db.collection::<Document>("workspaces");
+        let tasks_col = db.collection::<Document>("tasks");
+
+        let filter = if team_id.trim().is_empty() {
+            doc! {}
+        } else {
+            doc! { "team_id": team_id.trim() }
+        };
+
+        let mut cursor = ws_col.find(filter)
+            .await
+            .map_err(|e| format!("Lỗi tải không gian làm việc: {}", e))?;
+
+        let mut workspaces = Vec::new();
+        while cursor.advance().await.map_err(|e| e.to_string())? {
+            let doc = cursor.deserialize_current().map_err(|e| e.to_string())?;
+            let id = doc.get_object_id("_id").ok().map(|oid| oid.to_hex());
+            let tid = doc.get_str("team_id").unwrap_or_default().to_string();
+            let name = doc.get_str("name").unwrap_or_default().to_string();
+            let description = doc.get_str("description").unwrap_or_default().to_string();
+            let created_by = doc.get_str("created_by").ok().map(|s| s.to_string());
+
+            let created_at = match doc.get("created_at") {
+                Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
+                Some(Bson::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+
+            let updated_at = match doc.get("updated_at") {
+                Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
+                Some(Bson::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+
+            let mut task_count = 0;
+            if let Some(ref wid) = id {
+                task_count = tasks_col.count_documents(doc! { "workspace_id": wid }).await.unwrap_or(0) as usize;
+            }
+
+            workspaces.push(WorkspaceDto {
+                id,
+                team_id: tid,
+                name,
+                description,
+                created_by,
+                created_at,
+                updated_at,
+                task_count,
+            });
+        }
+
+        Ok(workspaces)
+    }
+
+    pub async fn create_workspace(
+        &self,
+        team_id: &str,
+        name: &str,
+        description: &str,
+        created_by: &str,
+    ) -> Result<WorkspaceDto, String> {
+        let db = self.get_db().await?;
+        let ws_col = db.collection::<Document>("workspaces");
+
+        let now = Utc::now();
+        let new_doc = doc! {
+            "team_id": team_id.trim(),
+            "name": name.trim(),
+            "description": description.trim(),
+            "created_by": created_by.trim(),
+            "created_at": mongodb::bson::DateTime::from_chrono(now),
+            "updated_at": mongodb::bson::DateTime::from_chrono(now),
+        };
+
+        let res = ws_col.insert_one(new_doc).await
+            .map_err(|e| format!("Lỗi tạo không gian làm việc: {}", e))?;
+
+        let id = res.inserted_id.as_object_id().map(|oid| oid.to_hex());
+
+        Ok(WorkspaceDto {
+            id,
+            team_id: team_id.trim().to_string(),
+            name: name.trim().to_string(),
+            description: description.trim().to_string(),
+            created_by: Some(created_by.trim().to_string()),
+            created_at: Some(now.to_rfc3339()),
+            updated_at: Some(now.to_rfc3339()),
+            task_count: 0,
+        })
+    }
+
+    pub async fn update_workspace(&self, id: &str, name: &str, description: &str) -> Result<bool, String> {
+        let db = self.get_db().await?;
+        let ws_col = db.collection::<Document>("workspaces");
+
+        let oid = ObjectId::parse_str(id).map_err(|_| "Mã Không gian làm việc không hợp lệ!".to_string())?;
+        let now = Utc::now();
+
+        let update_doc = doc! {
+            "$set": {
+                "name": name.trim(),
+                "description": description.trim(),
+                "updated_at": mongodb::bson::DateTime::from_chrono(now),
+            }
+        };
+
+        ws_col.update_one(doc! { "_id": oid }, update_doc).await
+            .map_err(|e| format!("Lỗi cập nhật không gian làm việc: {}", e))?;
+
+        Ok(true)
+    }
+
+    pub async fn delete_workspace(&self, id: &str) -> Result<bool, String> {
+        let db = self.get_db().await?;
+        let ws_col = db.collection::<Document>("workspaces");
+        let tasks_col = db.collection::<Document>("tasks");
+
+        let oid = ObjectId::parse_str(id).map_err(|_| "Mã Không gian làm việc không hợp lệ!".to_string())?;
+
+        // 1. Delete workspace
+        ws_col.delete_one(doc! { "_id": oid }).await
+            .map_err(|e| format!("Lỗi xóa không gian làm việc: {}", e))?;
+
+        // 2. Delete tasks in this workspace
+        let _ = tasks_col.delete_many(doc! { "workspace_id": id }).await;
+
+        Ok(true)
     }
 
     // ==========================================
@@ -181,6 +651,7 @@ impl DbState {
         let full_name = user_doc.get_str("full_name").unwrap_or("Cán bộ").to_string();
         let role = user_doc.get_str("role").unwrap_or("user").to_string();
         let email = user_doc.get_str("email").unwrap_or("").to_string();
+        let team_id = user_doc.get_str("team_id").ok().map(|s| s.to_string());
 
         let created_at = match user_doc.get("created_at") {
             Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
@@ -194,15 +665,28 @@ impl DbState {
             full_name,
             role,
             is_active,
+            team_id,
             created_at,
         })
     }
 
-    pub async fn get_all_users(&self) -> Result<Vec<UserSafe>, String> {
+    pub async fn get_all_users(&self, team_id: Option<String>) -> Result<Vec<UserSafe>, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("users");
 
-        let mut cursor = col.find(doc! {})
+        let filter = match team_id {
+            Some(tid) if !tid.trim().is_empty() => {
+                doc! {
+                    "$or": [
+                        { "team_id": tid.trim() },
+                        { "role": "super_admin" }
+                    ]
+                }
+            }
+            _ => doc! {}
+        };
+
+        let mut cursor = col.find(filter)
             .await
             .map_err(|e| format!("Lỗi tải danh sách người dùng: {}", e))?;
 
@@ -214,6 +698,7 @@ impl DbState {
             let full_name = doc.get_str("full_name").unwrap_or_default().to_string();
             let role = doc.get_str("role").unwrap_or("user").to_string();
             let is_active = doc.get_bool("is_active").unwrap_or(true);
+            let team_id = doc.get_str("team_id").ok().map(|s| s.to_string());
             let created_at = match doc.get("created_at") {
                 Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
                 Some(Bson::String(s)) => Some(s.clone()),
@@ -226,6 +711,7 @@ impl DbState {
                 full_name,
                 role,
                 is_active,
+                team_id,
                 created_at,
             });
         }
@@ -233,7 +719,18 @@ impl DbState {
         Ok(users)
     }
 
-    pub async fn create_user(&self, full_name: &str, email: &str, password: &str, role: &str) -> Result<UserSafe, String> {
+    pub async fn create_user(
+        &self,
+        full_name: &str,
+        email: &str,
+        password: &str,
+        role: &str,
+        team_id: Option<String>,
+    ) -> Result<UserSafe, String> {
+        if role == "super_admin" {
+            return Err("Không được phép cấp vai trò Super Admin!".to_string());
+        }
+
         let db = self.get_db().await?;
         let col = db.collection::<Document>("users");
 
@@ -246,7 +743,7 @@ impl DbState {
             .map_err(|e| format!("Lỗi mã hóa mật khẩu: {}", e))?;
 
         let now = Utc::now();
-        let new_doc = doc! {
+        let mut new_doc = doc! {
             "email": &email,
             "password_hash": hashed,
             "full_name": full_name.trim(),
@@ -254,6 +751,12 @@ impl DbState {
             "is_active": true,
             "created_at": mongodb::bson::DateTime::from_chrono(now)
         };
+
+        if let Some(ref tid) = team_id {
+            if !tid.trim().is_empty() {
+                new_doc.insert("team_id", tid.trim());
+            }
+        }
 
         let insert_res = col.insert_one(new_doc).await
             .map_err(|e| format!("Không thể tạo cán bộ: {}", e))?;
@@ -266,6 +769,7 @@ impl DbState {
             full_name: full_name.trim().to_string(),
             role: role.to_string(),
             is_active: true,
+            team_id,
             created_at: Some(now.to_rfc3339()),
         })
     }
@@ -277,6 +781,7 @@ impl DbState {
         role: Option<String>,
         is_active: Option<bool>,
         password: Option<String>,
+        team_id: Option<String>,
     ) -> Result<bool, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("users");
@@ -286,10 +791,24 @@ impl DbState {
             update_doc.insert("full_name", name.trim());
         }
         if let Some(r) = role {
+            if r == "super_admin" {
+                let existing = col.find_one(doc! { "email": email.trim().to_lowercase() }).await.map_err(|e| e.to_string())?;
+                let existing_role = existing.as_ref().and_then(|d| d.get_str("role").ok()).unwrap_or("");
+                if existing_role != "super_admin" {
+                    return Err("Không được phép nâng quyền lên Super Admin!".to_string());
+                }
+            }
             update_doc.insert("role", r);
         }
         if let Some(active) = is_active {
             update_doc.insert("is_active", active);
+        }
+        if let Some(tid) = team_id {
+            if tid.trim().is_empty() {
+                update_doc.insert("team_id", Bson::Null);
+            } else {
+                update_doc.insert("team_id", tid.trim());
+            }
         }
         if let Some(pwd) = password {
             if !pwd.trim().is_empty() {
@@ -333,11 +852,13 @@ impl DbState {
     }
 
     // ==========================================
-    // TASKS
+    // TASKS (TICKETS)
     // ==========================================
 
     pub async fn get_tasks(
         &self,
+        team_id: Option<String>,
+        workspace_id: Option<String>,
         status: Option<String>,
         priority: Option<String>,
         user_email: Option<String>,
@@ -346,6 +867,16 @@ impl DbState {
         let col = db.collection::<Document>("tasks");
 
         let mut filter = doc! {};
+        if let Some(tid) = team_id {
+            if !tid.trim().is_empty() {
+                filter.insert("team_id", tid.trim());
+            }
+        }
+        if let Some(wid) = workspace_id {
+            if !wid.trim().is_empty() {
+                filter.insert("workspace_id", wid.trim());
+            }
+        }
         if let Some(st) = status {
             if !st.is_empty() && st != "ALL" {
                 filter.insert("status", st);
@@ -384,6 +915,8 @@ impl DbState {
 
     pub async fn create_task(
         &self,
+        team_id: Option<String>,
+        workspace_id: Option<String>,
         title: &str,
         description: &str,
         assigned_to: Vec<String>,
@@ -416,6 +949,18 @@ impl DbState {
             "attachments": atts_bson,
         };
 
+        if let Some(ref tid) = team_id {
+            if !tid.trim().is_empty() {
+                new_doc.insert("team_id", tid.trim());
+            }
+        }
+
+        if let Some(ref wid) = workspace_id {
+            if !wid.trim().is_empty() {
+                new_doc.insert("workspace_id", wid.trim());
+            }
+        }
+
         if let Some(due_str) = due_date {
             if let Some(due_utc) = parse_due_date(&due_str) {
                 new_doc.insert("due_date", mongodb::bson::DateTime::from_chrono(due_utc));
@@ -442,6 +987,7 @@ impl DbState {
         status: &str,
         remind_before_days: Option<i32>,
         attachments: Option<Vec<TaskAttachment>>,
+        workspace_id: Option<String>,
     ) -> Result<bool, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("tasks");
@@ -449,96 +995,65 @@ impl DbState {
         let oid = ObjectId::parse_str(id)
             .map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
 
-        let existing = col
+        let old_doc = col
             .find_one(doc! { "_id": oid })
             .await
-            .map_err(|e| format!("Lỗi tải công việc: {}", e))?
+            .map_err(|e| format!("Lỗi truy vấn công việc cũ: {}", e))?
             .ok_or_else(|| "Không tìm thấy công việc!".to_string())?;
 
         let now = Utc::now();
         let days = clamp_remind_days(remind_before_days);
-        let mut new_remind_at: Option<DateTime<Utc>> = None;
-        let mut update_doc = doc! {
+
+        let parsed_due_utc = due_date.as_deref().and_then(parse_due_date);
+        let new_remind_at = parsed_due_utc.map(|due| due - Duration::days(days as i64));
+        let schedule_changed = reminder_schedule_changed(&old_doc, days, new_remind_at);
+
+        let mut set_doc = doc! {
             "title": title.trim(),
             "description": description,
             "assigned_to": assigned_to,
             "priority": priority,
             "status": status,
             "updated_at": mongodb::bson::DateTime::from_chrono(now),
-            "remind_before_days": days
+            "remind_before_days": days,
         };
 
-        if let Some(atts) = attachments {
-            let atts_bson = Bson::Array(atts.into_iter().map(Self::attachment_to_doc).map(Bson::Document).collect());
-            update_doc.insert("attachments", atts_bson);
-        }
-
-        if let Some(due_str) = due_date {
-            if let Some(due_utc) = parse_due_date(&due_str) {
-                update_doc.insert("due_date", mongodb::bson::DateTime::from_chrono(due_utc));
-                let remind_at = due_utc - Duration::days(days as i64);
-                new_remind_at = Some(remind_at);
-                update_doc.insert("remind_at", mongodb::bson::DateTime::from_chrono(remind_at));
+        if let Some(ref wid) = workspace_id {
+            if !wid.trim().is_empty() {
+                set_doc.insert("workspace_id", wid.trim());
             }
         }
 
-        let reminder_changed = reminder_schedule_changed(&existing, days, new_remind_at);
-        if reminder_changed {
-            update_doc.insert("reminded_at", Bson::Null);
+        if let Some(atts) = attachments {
+            let arr = Bson::Array(atts.into_iter().map(Self::attachment_to_doc).map(Bson::Document).collect());
+            set_doc.insert("attachments", arr);
         }
 
-        let mut update_cmd = doc! { "$set": update_doc };
-        if reminder_changed {
-            update_cmd.insert(
-                "$unset",
-                doc! {
-                    "reminded_48h": "",
-                    "last_reminded_at": ""
-                },
-            );
+        let mut unset_doc = doc! {};
+
+        if let Some(due_utc) = parsed_due_utc {
+            set_doc.insert("due_date", mongodb::bson::DateTime::from_chrono(due_utc));
+            if let Some(remind_at) = new_remind_at {
+                set_doc.insert("remind_at", mongodb::bson::DateTime::from_chrono(remind_at));
+            }
+            if schedule_changed {
+                unset_doc.insert("reminded_at", "");
+            }
+        } else {
+            unset_doc.insert("due_date", "");
+            unset_doc.insert("remind_at", "");
+            unset_doc.insert("reminded_at", "");
         }
 
-        let res = col
-            .update_one(doc! { "_id": oid }, update_cmd)
-            .await
+        let mut update = doc! { "$set": set_doc };
+        if !unset_doc.is_empty() {
+            update.insert("$unset", unset_doc);
+        }
+
+        col.update_one(doc! { "_id": oid }, update).await
             .map_err(|e| format!("Lỗi cập nhật công việc: {}", e))?;
 
-        Ok(res.matched_count > 0)
-    }
-
-    pub async fn add_task_attachment(&self, task_id: &str, attachment: TaskAttachment) -> Result<(), String> {
-        let db = self.get_db().await?;
-        let col = db.collection::<Document>("tasks");
-        let oid = ObjectId::parse_str(task_id).map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
-
-        let att_doc = Self::attachment_to_doc(attachment);
-        let now = Utc::now();
-        col.update_one(
-            doc! { "_id": oid },
-            doc! {
-                "$push": { "attachments": att_doc },
-                "$set": { "updated_at": mongodb::bson::DateTime::from_chrono(now) }
-            }
-        ).await.map_err(|e| format!("Lỗi thêm đính kèm: {}", e))?;
-
-        Ok(())
-    }
-
-    pub async fn remove_task_attachment(&self, task_id: &str, attachment_id: &str) -> Result<(), String> {
-        let db = self.get_db().await?;
-        let col = db.collection::<Document>("tasks");
-        let oid = ObjectId::parse_str(task_id).map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
-
-        let now = Utc::now();
-        col.update_one(
-            doc! { "_id": oid },
-            doc! {
-                "$pull": { "attachments": { "id": attachment_id } },
-                "$set": { "updated_at": mongodb::bson::DateTime::from_chrono(now) }
-            }
-        ).await.map_err(|e| format!("Lỗi xóa đính kèm: {}", e))?;
-
-        Ok(())
+        Ok(true)
     }
 
     pub async fn update_task_status(&self, id: &str, status: &str) -> Result<bool, String> {
@@ -549,12 +1064,17 @@ impl DbState {
             .map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
 
         let now = Utc::now();
-        let res = col.update_one(
-            doc! { "_id": oid },
-            doc! { "$set": { "status": status, "updated_at": mongodb::bson::DateTime::from_chrono(now) } }
-        ).await.map_err(|e| format!("Lỗi cập nhật trạng thái: {}", e))?;
+        let update_doc = doc! {
+            "$set": {
+                "status": status,
+                "updated_at": mongodb::bson::DateTime::from_chrono(now)
+            }
+        };
 
-        Ok(res.matched_count > 0)
+        col.update_one(doc! { "_id": oid }, update_doc).await
+            .map_err(|e| format!("Lỗi cập nhật trạng thái: {}", e))?;
+
+        Ok(true)
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<bool, String> {
@@ -564,25 +1084,91 @@ impl DbState {
         let oid = ObjectId::parse_str(id)
             .map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
 
-        let res = col.delete_one(doc! { "_id": oid }).await
+        col.delete_one(doc! { "_id": oid }).await
             .map_err(|e| format!("Lỗi xóa công việc: {}", e))?;
 
-        Ok(res.deleted_count > 0)
+        Ok(true)
+    }
+
+    // Attachment Helpers
+    pub async fn add_task_attachment(&self, task_id: &str, attachment: TaskAttachment) -> Result<(), String> {
+        let db = self.get_db().await?;
+        let col = db.collection::<Document>("tasks");
+
+        let oid = ObjectId::parse_str(task_id).map_err(|_| "Mã công việc không hợp lệ".to_string())?;
+        let att_doc = Self::attachment_to_doc(attachment);
+
+        col.update_one(
+            doc! { "_id": oid },
+            doc! {
+                "$push": { "attachments": att_doc },
+                "$set": { "updated_at": mongodb::bson::DateTime::from_chrono(Utc::now()) }
+            }
+        ).await.map_err(|e| format!("Lỗi lưu tệp đính kèm vào công việc: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn remove_task_attachment(&self, task_id: &str, attachment_id: &str) -> Result<(), String> {
+        let db = self.get_db().await?;
+        let col = db.collection::<Document>("tasks");
+
+        let oid = ObjectId::parse_str(task_id).map_err(|_| "Mã công việc không hợp lệ".to_string())?;
+
+        col.update_one(
+            doc! { "_id": oid },
+            doc! {
+                "$pull": { "attachments": { "id": attachment_id } },
+                "$set": { "updated_at": mongodb::bson::DateTime::from_chrono(Utc::now()) }
+            }
+        ).await.map_err(|e| format!("Lỗi xóa tệp đính kèm khỏi công việc: {}", e))?;
+
+        Ok(())
     }
 
     // ==========================================
-    // DASHBOARD STATS
+    // DASHBOARD & STATS
     // ==========================================
 
-    pub async fn get_dashboard_stats(&self, for_user: Option<String>) -> Result<DashboardStats, String> {
-        let tasks = self.get_tasks(None, None, for_user).await?;
-        let now = Utc::now();
+    pub async fn get_dashboard_stats(
+        &self,
+        team_id: Option<String>,
+        workspace_id: Option<String>,
+        for_user: Option<String>,
+    ) -> Result<DashboardStats, String> {
+        let db = self.get_db().await?;
+        let col = db.collection::<Document>("tasks");
+
+        let mut filter = doc! {};
+        if let Some(tid) = team_id {
+            if !tid.trim().is_empty() {
+                filter.insert("team_id", tid.trim());
+            }
+        }
+        if let Some(wid) = workspace_id {
+            if !wid.trim().is_empty() {
+                filter.insert("workspace_id", wid.trim());
+            }
+        }
+        if let Some(user_email) = for_user {
+            if !user_email.is_empty() {
+                filter.insert("assigned_to", user_email);
+            }
+        }
+
+        let mut cursor = col.find(filter)
+            .await
+            .map_err(|e| format!("Lỗi thống kê: {}", e))?;
 
         let mut stats = DashboardStats::default();
-        stats.total = tasks.len();
+        let now = Utc::now();
 
-        for t in tasks {
-            match t.status.as_str() {
+        while cursor.advance().await.map_err(|e| e.to_string())? {
+            let doc = cursor.deserialize_current().map_err(|e| e.to_string())?;
+            stats.total += 1;
+
+            let st = doc.get_str("status").unwrap_or("TODO");
+            match st {
                 "TODO" => stats.todo += 1,
                 "IN_PROGRESS" => stats.in_progress += 1,
                 "REVIEW" => stats.review += 1,
@@ -590,13 +1176,14 @@ impl DbState {
                 _ => {}
             }
 
-            if t.status != "DONE" {
-                if let Some(due_str) = &t.due_date {
-                    if let Ok(due_dt) = DateTime::parse_from_rfc3339(due_str) {
-                        let due_utc = due_dt.with_timezone(&Utc);
-                        if due_utc < now {
-                            stats.overdue += 1;
-                        } else if (due_utc - now).num_hours() <= 48 {
+            if st != "DONE" {
+                if let Some(due_dt) = doc_datetime(&doc, "due_date") {
+                    if due_dt < now {
+                        stats.overdue += 1;
+                    } else {
+                        let diff_hours = (due_dt - now).num_hours();
+                        let prio = doc.get_str("priority").unwrap_or("Low");
+                        if prio == "Urgent" || diff_hours <= 48 {
                             stats.urgent_or_near += 1;
                         }
                     }
@@ -623,6 +1210,8 @@ impl DbState {
     // Helper: Convert Document to TaskDto
     fn doc_to_task(doc: Document) -> TaskDto {
         let id = doc.get_object_id("_id").ok().map(|oid| oid.to_hex());
+        let team_id = doc.get_str("team_id").ok().map(|s| s.to_string());
+        let workspace_id = doc.get_str("workspace_id").ok().map(|s| s.to_string());
         let title = doc.get_str("title").unwrap_or_default().to_string();
         let description = doc.get_str("description").unwrap_or_default().to_string();
 
@@ -698,6 +1287,8 @@ impl DbState {
 
         TaskDto {
             id,
+            team_id,
+            workspace_id,
             title,
             description,
             assigned_to,

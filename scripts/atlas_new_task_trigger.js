@@ -75,7 +75,7 @@ function formatDescriptionForEmail(html) {
     return s;
 }
 
-exports = async function(changeEvent) {
+exports = async function (changeEvent) {
     // 1. Lấy thông tin công việc vừa được tạo
     const doc = changeEvent.fullDocument;
     if (!doc) {
@@ -83,10 +83,45 @@ exports = async function(changeEvent) {
         return;
     }
 
-    // 2. Cấu hình gửi Email qua Brevo
-    const BREVO_API_KEY = "DIEN_BREVO_API_KEY_VAO_DAY"; 
-    const SENDER_EMAIL  = "tuankug@gmail.com"; // Email của bạn (đã đăng ký trên Brevo)
-    const SENDER_NAME   = "Hệ Thống Quản Lý Công Việc";
+    // 2. Tra cứu thông tin Đội nhóm (Team) và Không gian làm việc (Workspace)
+    let teamName = "";
+    let workspaceName = "";
+    try {
+        let mongodb = context.services.get("qlcv") || context.services.get("mongodb-atlas") || context.services.get("Cluster0");
+        if (mongodb) {
+            const db = mongodb.db("qlcv_db");
+            if (doc.team_id) {
+                const teamsCol = db.collection("teams");
+                let teamQuery = [{ _id: doc.team_id }];
+                try {
+                    teamQuery.push({ _id: new BSON.ObjectId(String(doc.team_id)) });
+                } catch (e) { }
+                const teamDoc = await teamsCol.findOne({ $or: teamQuery });
+                if (teamDoc && teamDoc.name) {
+                    teamName = teamDoc.name;
+                }
+            }
+
+            if (doc.workspace_id) {
+                const wsCol = db.collection("workspaces");
+                let wsQuery = [{ _id: doc.workspace_id }];
+                try {
+                    wsQuery.push({ _id: new BSON.ObjectId(String(doc.workspace_id)) });
+                } catch (e) { }
+                const wsDoc = await wsCol.findOne({ $or: wsQuery });
+                if (wsDoc && wsDoc.name) {
+                    workspaceName = wsDoc.name;
+                }
+            }
+        }
+    } catch (lookupErr) {
+        console.log("Lỗi tra cứu thông tin team/workspace:", lookupErr.message);
+    }
+
+    // 3. Cấu hình gửi Email qua Brevo
+    const BREVO_API_KEY = "DIEN_BREVO_API_KEY_VAO_DAY";
+    const SENDER_EMAIL = "tuankug@gmail.com"; // Email của bạn (đã đăng ký trên Brevo)
+    const SENDER_NAME = "Hệ Thống Quản Lý Công Việc";
 
     const assignees = doc.assigned_to || [];
     if (assignees.length === 0) {
@@ -94,7 +129,7 @@ exports = async function(changeEvent) {
         return;
     }
 
-    // 3. Tính toán thời gian hạn chót
+    // 4. Tính toán thời gian hạn chót
     const now = new Date();
     const dueDate = new Date(doc.due_date);
     const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
@@ -107,10 +142,10 @@ exports = async function(changeEvent) {
         hour: "2-digit", minute: "2-digit"
     });
 
-    // Tiêu đề chuẩn mực, trang nhã (không dùng icon báo động để tránh bộ lọc Spam của Gmail)
+    // Tiêu đề chuẩn mực
     const subject = isUrgent
-        ? `[QLCV] Giao việc ưu tiên: ${doc.title} (Hạn: ${dueFormatted})`
-        : `[QLCV] Thông báo công việc mới: ${doc.title}`;
+        ? `Giao việc ưu tiên: ${doc.title} (Hạn: ${dueFormatted})`
+        : `Thông báo công việc mới: ${doc.title}`;
 
     const priorityColors = {
         "Urgent": "#DC2626",
@@ -128,7 +163,7 @@ exports = async function(changeEvent) {
              Bạn vừa được phân công một công việc mới trên hệ thống QLCV.
            </div>`;
 
-    // 4. Nội dung HTML chuẩn Responsive
+    // 5. Nội dung HTML chuẩn Responsive
     const htmlBody = `
     <!DOCTYPE html>
     <html lang="vi">
@@ -147,7 +182,7 @@ exports = async function(changeEvent) {
             .desc-box { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px 16px; margin: 0 0 16px 0; font-size: 14px; color: #1E293B; }
             .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
             .info-table td { padding: 8px 0; font-size: 14px; vertical-align: top; }
-            .info-label { width: 140px; color: #64748B; font-weight: 600; }
+            .info-label { width: 160px; color: #64748B; font-weight: 600; }
             .info-val { color: #1E293B; }
             .app-box { background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #475569; }
             .footer { background: #F8FAFC; padding: 16px 24px; text-align: center; font-size: 12px; color: #94A3B8; border-top: 1px solid #E5E7EB; }
@@ -164,6 +199,16 @@ exports = async function(changeEvent) {
                     <div class="task-title">${escapeHtml(doc.title || "")}</div>
                     <div class="desc-box">${formatDescriptionForEmail(doc.description)}</div>
                     <table class="info-table">
+                        ${teamName ? `
+                        <tr>
+                            <td class="info-label">Đội nhóm (Team):</td>
+                            <td class="info-val"><b>${escapeHtml(teamName)}</b></td>
+                        </tr>` : ""}
+                        ${workspaceName ? `
+                        <tr>
+                            <td class="info-label">Không gian làm việc:</td>
+                            <td class="info-val"><b>${escapeHtml(workspaceName)}</b></td>
+                        </tr>` : ""}
                         <tr>
                             <td class="info-label">Mức độ ưu tiên:</td>
                             <td class="info-val"><b style="color: ${priorityColor};">${escapeHtml(doc.priority || "Trung bình")}</b></td>
@@ -191,10 +236,12 @@ exports = async function(changeEvent) {
     </html>
     `;
 
-    // 5. Nội dung thuần Text (Plain Text) song song - Cực kỳ quan trọng để vượt qua Spam Filter
-    const textBody = 
+    // 6. Nội dung thuần Text (Plain Text) song song - Cực kỳ quan trọng để vượt qua Spam Filter
+    const textBody =
         `THÔNG BÁO PHÂN CÔNG CÔNG VIỆC\n\n` +
         `Tiêu đề: ${doc.title}\n` +
+        (teamName ? `Đội nhóm: ${teamName}\n` : "") +
+        (workspaceName ? `Không gian làm việc: ${workspaceName}\n` : "") +
         `Mô tả: ${htmlToPlainText(doc.description) || "Không có mô tả chi tiết."}\n` +
         `Mức độ ưu tiên: ${doc.priority || "Trung bình"}\n` +
         `Hạn hoàn thành: ${dueFormatted}\n` +

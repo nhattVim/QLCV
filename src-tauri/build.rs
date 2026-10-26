@@ -49,6 +49,10 @@ fn main() {
     let s3_region = load_env_value(&env_path, "S3_REGION").unwrap_or_else(|| "auto".to_string());
     let s3_public_domain = load_env_value(&env_path, "S3_PUBLIC_DOMAIN").unwrap_or_default();
 
+    let def_admin_email = load_env_value(&env_path, "DEFAULT_ADMIN_EMAIL").unwrap_or_else(|| "tuankug@gmail.com".to_string());
+    let def_admin_password = load_env_value(&env_path, "DEFAULT_ADMIN_PASSWORD").unwrap_or_else(|| "123456".to_string());
+    let def_admin_name = load_env_value(&env_path, "DEFAULT_ADMIN_NAME").unwrap_or_else(|| "Quản Trị Viên".to_string());
+
     let uri_x = xor_bytes(uri.as_bytes(), key);
     let db_x = xor_bytes(db_name.as_bytes(), key);
     let s3_endpoint_x = xor_bytes(s3_endpoint.as_bytes(), key);
@@ -57,6 +61,9 @@ fn main() {
     let s3_bucket_x = xor_bytes(s3_bucket.as_bytes(), key);
     let s3_region_x = xor_bytes(s3_region.as_bytes(), key);
     let s3_public_domain_x = xor_bytes(s3_public_domain.as_bytes(), key);
+    let def_admin_email_x = xor_bytes(def_admin_email.as_bytes(), key);
+    let def_admin_password_x = xor_bytes(def_admin_password.as_bytes(), key);
+    let def_admin_name_x = xor_bytes(def_admin_name.as_bytes(), key);
 
     let dest = PathBuf::from(env::var("OUT_DIR").unwrap()).join("embedded_cfg.rs");
     let body = format!(
@@ -68,7 +75,10 @@ fn main() {
          pub const EMBED_S3_SECRET_KEY: &[u8] = &{s3_secret_key:?};\n\
          pub const EMBED_S3_BUCKET: &[u8] = &{s3_bucket:?};\n\
          pub const EMBED_S3_REGION: &[u8] = &{s3_region:?};\n\
-         pub const EMBED_S3_PUBLIC_DOMAIN: &[u8] = &{s3_public_domain:?};\n",
+         pub const EMBED_S3_PUBLIC_DOMAIN: &[u8] = &{s3_public_domain:?};\n\
+         pub const EMBED_ADMIN_EMAIL: &[u8] = &{def_admin_email:?};\n\
+         pub const EMBED_ADMIN_PASSWORD: &[u8] = &{def_admin_password:?};\n\
+         pub const EMBED_ADMIN_NAME: &[u8] = &{def_admin_name:?};\n",
         key = key,
         uri = uri_x,
         db = db_x,
@@ -78,6 +88,9 @@ fn main() {
         s3_bucket = s3_bucket_x,
         s3_region = s3_region_x,
         s3_public_domain = s3_public_domain_x,
+        def_admin_email = def_admin_email_x,
+        def_admin_password = def_admin_password_x,
+        def_admin_name = def_admin_name_x,
     );
     fs::write(dest, body).expect("failed to write embedded_cfg.rs");
 }

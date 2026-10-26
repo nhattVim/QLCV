@@ -54,10 +54,13 @@
         <div class="form-row">
           <div class="form-group flex-1">
             <label class="form-label">Phân quyền vai trò</label>
-            <select v-model="form.role" class="form-control">
+            <select v-if="props.userData?.role !== 'super_admin'" v-model="form.role" class="form-control">
               <option value="user">Cán bộ chuyên viên</option>
-              <option value="admin">Quản trị viên hệ thống</option>
+              <option value="admin">Quản trị viên</option>
             </select>
+            <div v-else class="form-control" style="background: var(--bg-sub); cursor: not-allowed; color: var(--text-muted);">
+              ⚡ Super Admin (Không thể đổi vai trò)
+            </div>
           </div>
 
           <div v-if="isEdit" class="form-group flex-1">
@@ -89,6 +92,18 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  teams: {
+    type: Array,
+    default: () => [],
+  },
+  currentTeamId: {
+    type: String,
+    default: '',
+  },
+  currentUser: {
+    type: Object,
+    default: () => ({}),
+  },
 });
 
 const emit = defineEmits(['close', 'save']);
@@ -101,6 +116,7 @@ const form = reactive({
   email: '',
   password: '',
   role: 'user',
+  team_id: props.currentTeamId || '',
   is_active: true,
 });
 
@@ -109,8 +125,11 @@ onMounted(() => {
     form.full_name = props.userData.full_name || '';
     form.email = props.userData.email || '';
     form.role = props.userData.role || 'user';
+    form.team_id = props.userData.team_id || props.currentTeamId || '';
     form.is_active = props.userData.is_active !== false;
     form.password = '';
+  } else {
+    form.team_id = props.currentTeamId || '';
   }
 });
 

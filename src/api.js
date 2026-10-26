@@ -1,4 +1,4 @@
-// API bridge for Tauri commands with local fallback session support
+// API bridge for Tauri commands with multi-team & workspace support
 import { invoke } from '@tauri-apps/api/core';
 
 export const api = {
@@ -21,27 +21,68 @@ export const api = {
     return await invoke('login', { email, password });
   },
 
-  // Users
-  async getUsers() {
-    return await invoke('get_users');
+  // Teams (Super Admin & Team Management)
+  async getTeams() {
+    return await invoke('get_teams');
   },
 
-  async createUser(fullName, email, password, role) {
+  async createTeam(name, description = '') {
+    return await invoke('create_team', { name, description });
+  },
+
+  async updateTeam(id, name, description = '') {
+    return await invoke('update_team', { id, name, description });
+  },
+
+  async deleteTeam(id) {
+    return await invoke('delete_team', { id });
+  },
+
+  // Workspaces (Không gian làm việc trong mỗi Team)
+  async getWorkspaces(teamId) {
+    return await invoke('get_workspaces', { teamId: teamId || '' });
+  },
+
+  async createWorkspace(teamId, name, description = '', createdBy = 'Admin') {
+    return await invoke('create_workspace', {
+      teamId,
+      name,
+      description,
+      createdBy
+    });
+  },
+
+  async updateWorkspace(id, name, description = '') {
+    return await invoke('update_workspace', { id, name, description });
+  },
+
+  async deleteWorkspace(id) {
+    return await invoke('delete_workspace', { id });
+  },
+
+  // Users
+  async getUsers(teamId = null) {
+    return await invoke('get_users', { teamId: teamId || null });
+  },
+
+  async createUser(fullName, email, password, role, teamId = null) {
     return await invoke('create_user', {
       fullName,
       email,
       password,
-      role
+      role,
+      teamId: teamId || null
     });
   },
 
-  async updateUser(email, fullName, role, isActive, password) {
+  async updateUser(email, fullName, role, isActive, password, teamId = null) {
     return await invoke('update_user', {
       email,
       fullName: fullName || null,
       role: role || null,
       isActive: isActive !== undefined ? isActive : null,
-      password: password || null
+      password: password || null,
+      teamId: teamId || null
     });
   },
 
@@ -49,9 +90,11 @@ export const api = {
     return await invoke('delete_user', { email });
   },
 
-  // Tasks
-  async getTasks(status = null, priority = null, userEmail = null) {
+  // Tasks (Tickets)
+  async getTasks(teamId = null, workspaceId = null, status = null, priority = null, userEmail = null) {
     return await invoke('get_tasks', {
+      teamId: teamId || null,
+      workspaceId: workspaceId || null,
       status: status || null,
       priority: priority || null,
       userEmail: userEmail || null
@@ -60,6 +103,8 @@ export const api = {
 
   async createTask(taskData) {
     return await invoke('create_task', {
+      teamId: taskData.team_id || null,
+      workspaceId: taskData.workspace_id || null,
       title: taskData.title,
       description: taskData.description || '',
       assignedTo: taskData.assigned_to || [],
@@ -81,7 +126,8 @@ export const api = {
       dueDate: taskData.due_date || null,
       status: taskData.status || 'TODO',
       remindBeforeDays: taskData.remind_before_days || 2,
-      attachments: taskData.attachments !== undefined ? taskData.attachments : null
+      attachments: taskData.attachments !== undefined ? taskData.attachments : null,
+      workspaceId: taskData.workspace_id || null
     });
   },
 
@@ -94,11 +140,15 @@ export const api = {
   },
 
   // Dashboard stats
-  async getDashboardStats(forUser = null) {
-    return await invoke('get_dashboard_stats', { forUser: forUser || null });
+  async getDashboardStats(teamId = null, workspaceId = null, forUser = null) {
+    return await invoke('get_dashboard_stats', {
+      teamId: teamId || null,
+      workspaceId: workspaceId || null,
+      forUser: forUser || null
+    });
   },
 
-  // Storage & Attachments (Cloudflare R2 / S3)
+  // Storage & Attachments (Cloudflare R2 dạng team -> workspace -> ticket)
   async isStorageConfigured() {
     try {
       return await invoke('is_storage_configured');
@@ -107,7 +157,7 @@ export const api = {
     }
   },
 
-  async uploadAttachment(taskId, fileName, fileData, contentType, uploadedBy) {
+  async uploadAttachment(teamId, workspaceId, taskId, fileName, fileData, contentType, uploadedBy) {
     let bytes;
     if (fileData instanceof Uint8Array) {
       bytes = Array.from(fileData);
@@ -120,6 +170,8 @@ export const api = {
     }
 
     return await invoke('upload_attachment', {
+      teamId: teamId || null,
+      workspaceId: workspaceId || null,
       taskId: taskId || null,
       fileName,
       fileData: bytes,
@@ -144,4 +196,3 @@ export const api = {
     return await invoke('open_attachment', { objectKey, fileName });
   }
 };
-

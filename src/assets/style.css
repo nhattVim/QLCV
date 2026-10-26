@@ -409,13 +409,15 @@ textarea.form-control {
 .kanban-sortable-fallback {
   z-index: 99999999 !important;
   pointer-events: none !important;
-  opacity: 0.95 !important;
+  opacity: 0.98 !important;
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28), 0 4px 12px rgba(0, 0, 0, 0.15) !important;
   cursor: grabbing !important;
   border-color: #2563eb !important;
   transition: none !important;
   background-color: var(--bg-card) !important;
   border-radius: var(--radius-md) !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 .kanban-sortable-ghost {

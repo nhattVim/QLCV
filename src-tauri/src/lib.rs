@@ -3,7 +3,7 @@ mod db;
 mod storage;
 
 use db::DbState;
-use models::{DashboardStats, TaskAttachment, TaskDto, UserSafe};
+use models::{DashboardStats, TaskAttachment, TaskDto, TeamDto, UserSafe, WorkspaceDto};
 use tauri::State;
 
 #[tauri::command]
@@ -15,6 +15,7 @@ async fn get_connection_status(state: State<'_, DbState>) -> Result<bool, String
 #[tauri::command]
 async fn reconnect_mongo(state: State<'_, DbState>, uri: String) -> Result<bool, String> {
     state.connect(&uri).await?;
+    state.init_default_data().await?;
     Ok(true)
 }
 
@@ -23,9 +24,81 @@ async fn login(state: State<'_, DbState>, email: String, password: String) -> Re
     state.authenticate(&email, &password).await
 }
 
+// ==========================================
+// TEAMS COMMANDS
+// ==========================================
+
 #[tauri::command]
-async fn get_users(state: State<'_, DbState>) -> Result<Vec<UserSafe>, String> {
-    state.get_all_users().await
+async fn get_teams(state: State<'_, DbState>) -> Result<Vec<TeamDto>, String> {
+    state.get_teams().await
+}
+
+#[tauri::command]
+async fn create_team(
+    state: State<'_, DbState>,
+    name: String,
+    description: String,
+) -> Result<TeamDto, String> {
+    state.create_team(&name, &description).await
+}
+
+#[tauri::command]
+async fn update_team(
+    state: State<'_, DbState>,
+    id: String,
+    name: String,
+    description: String,
+) -> Result<bool, String> {
+    state.update_team(&id, &name, &description).await
+}
+
+#[tauri::command]
+async fn delete_team(state: State<'_, DbState>, id: String) -> Result<bool, String> {
+    state.delete_team(&id).await
+}
+
+// ==========================================
+// WORKSPACES COMMANDS
+// ==========================================
+
+#[tauri::command]
+async fn get_workspaces(state: State<'_, DbState>, team_id: String) -> Result<Vec<WorkspaceDto>, String> {
+    state.get_workspaces(&team_id).await
+}
+
+#[tauri::command]
+async fn create_workspace(
+    state: State<'_, DbState>,
+    team_id: String,
+    name: String,
+    description: String,
+    created_by: String,
+) -> Result<WorkspaceDto, String> {
+    state.create_workspace(&team_id, &name, &description, &created_by).await
+}
+
+#[tauri::command]
+async fn update_workspace(
+    state: State<'_, DbState>,
+    id: String,
+    name: String,
+    description: String,
+) -> Result<bool, String> {
+    state.update_workspace(&id, &name, &description).await
+}
+
+#[tauri::command]
+async fn delete_workspace(state: State<'_, DbState>, id: String) -> Result<bool, String> {
+    state.delete_workspace(&id).await
+}
+
+// ==========================================
+// USERS COMMANDS
+// ==========================================
+
+#[tauri::command]
+async fn get_users(state: State<'_, DbState>, team_id: Option<String>) -> Result<Vec<UserSafe>, String> {
+    state.get_all_users(team_id).await
 }
 
 #[tauri::command]
@@ -35,8 +108,9 @@ async fn create_user(
     email: String,
     password: String,
     role: String,
+    team_id: Option<String>,
 ) -> Result<UserSafe, String> {
-    state.create_user(&full_name, &email, &password, &role).await
+    state.create_user(&full_name, &email, &password, &role, team_id).await
 }
 
 #[tauri::command]
@@ -47,8 +121,9 @@ async fn update_user(
     role: Option<String>,
     is_active: Option<bool>,
     password: Option<String>,
+    team_id: Option<String>,
 ) -> Result<bool, String> {
-    state.update_user(&email, full_name, role, is_active, password).await
+    state.update_user(&email, full_name, role, is_active, password, team_id).await
 }
 
 #[tauri::command]
@@ -56,19 +131,27 @@ async fn delete_user(state: State<'_, DbState>, email: String) -> Result<bool, S
     state.delete_user(&email).await
 }
 
+// ==========================================
+// TASKS COMMANDS
+// ==========================================
+
 #[tauri::command]
 async fn get_tasks(
     state: State<'_, DbState>,
+    team_id: Option<String>,
+    workspace_id: Option<String>,
     status: Option<String>,
     priority: Option<String>,
     user_email: Option<String>,
 ) -> Result<Vec<TaskDto>, String> {
-    state.get_tasks(status, priority, user_email).await
+    state.get_tasks(team_id, workspace_id, status, priority, user_email).await
 }
 
 #[tauri::command]
 async fn create_task(
     state: State<'_, DbState>,
+    team_id: Option<String>,
+    workspace_id: Option<String>,
     title: String,
     description: String,
     assigned_to: Vec<String>,
@@ -80,6 +163,8 @@ async fn create_task(
 ) -> Result<TaskDto, String> {
     state
         .create_task(
+            team_id,
+            workspace_id,
             &title,
             &description,
             assigned_to,
@@ -104,6 +189,7 @@ async fn update_task(
     status: String,
     remind_before_days: Option<i32>,
     attachments: Option<Vec<TaskAttachment>>,
+    workspace_id: Option<String>,
 ) -> Result<bool, String> {
     state
         .update_task(
@@ -116,6 +202,7 @@ async fn update_task(
             &status,
             remind_before_days,
             attachments,
+            workspace_id,
         )
         .await
 }
@@ -137,9 +224,11 @@ async fn delete_task(state: State<'_, DbState>, id: String) -> Result<bool, Stri
 #[tauri::command]
 async fn get_dashboard_stats(
     state: State<'_, DbState>,
+    team_id: Option<String>,
+    workspace_id: Option<String>,
     for_user: Option<String>,
 ) -> Result<DashboardStats, String> {
-    state.get_dashboard_stats(for_user).await
+    state.get_dashboard_stats(team_id, workspace_id, for_user).await
 }
 
 // ==========================================
@@ -154,17 +243,31 @@ async fn is_storage_configured() -> Result<bool, String> {
 #[tauri::command]
 async fn upload_attachment(
     state: State<'_, DbState>,
+    team_id: Option<String>,
+    workspace_id: Option<String>,
     task_id: Option<String>,
     file_name: String,
     file_data: Vec<u8>,
     content_type: String,
     uploaded_by: String,
 ) -> Result<TaskAttachment, String> {
-    let att = storage::upload_attachment(&file_name, &file_data, &content_type, &uploaded_by).await?;
+    let tid_str = team_id.unwrap_or_else(|| "default_team".to_string());
+    let wid_str = workspace_id.unwrap_or_else(|| "default_workspace".to_string());
+    let task_id_str = task_id.clone().unwrap_or_else(|| "draft".to_string());
 
-    if let Some(tid) = task_id {
-        if !tid.trim().is_empty() {
-            state.add_task_attachment(&tid, att.clone()).await?;
+    let att = storage::upload_attachment(
+        &tid_str,
+        &wid_str,
+        &task_id_str,
+        &file_name,
+        &file_data,
+        &content_type,
+        &uploaded_by,
+    ).await?;
+
+    if let Some(ref tid) = task_id {
+        if !tid.trim().is_empty() && tid.trim() != "draft" {
+            state.add_task_attachment(tid, att.clone()).await?;
         }
     }
 
@@ -209,7 +312,7 @@ pub fn run() {
         if let Err(e) = state_clone.init().await {
             eprintln!("[DB Warning] Initial MongoDB connection error: {}", e);
         } else {
-            println!("[DB Success] Connected to MongoDB Atlas successfully!");
+            println!("[DB Success] Connected to MongoDB Atlas and initialized successfully!");
         }
     });
 
@@ -222,6 +325,14 @@ pub fn run() {
             get_connection_status,
             reconnect_mongo,
             login,
+            get_teams,
+            create_team,
+            update_team,
+            delete_team,
+            get_workspaces,
+            create_workspace,
+            update_workspace,
+            delete_workspace,
             get_users,
             create_user,
             update_user,

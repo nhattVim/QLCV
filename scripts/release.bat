@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+cd /d "%~dp0.."
 title QLCV - Quan ly Phat hanh va Ban cap nhat
 
 :MENU

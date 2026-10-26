@@ -19,11 +19,12 @@
       <table class="users-table">
         <thead>
           <tr>
-            <th style="width: 220px;">Cán bộ</th>
-            <th style="min-width: 220px;">Email</th>
+            <th style="width: 200px;">Cán bộ</th>
+            <th style="min-width: 200px;">Email</th>
+            <th style="width: 150px;">Đội nhóm (Team)</th>
             <th style="width: 140px;">Vai trò</th>
             <th style="width: 130px;">Trạng thái</th>
-            <th style="width: 130px;">Ngày tham gia</th>
+            <th style="width: 120px;">Ngày tham gia</th>
             <th style="width: 200px; text-align: right;">Thao tác</th>
           </tr>
         </thead>
@@ -43,10 +44,20 @@
             <!-- Email -->
             <td class="email-cell">{{ user.email }}</td>
 
+            <!-- Team Name -->
+            <td>
+              <span class="team-chip">
+                {{ getTeamName(user.team_id) }}
+              </span>
+            </td>
+
             <!-- Role Badge -->
             <td>
-              <span class="badge" :class="user.role === 'admin' ? 'role-badge-admin' : 'role-badge-user'">
-                {{ user.role === 'admin' ? '👑 Quản trị viên' : '👤 Cán bộ' }}
+              <span 
+                class="badge" 
+                :class="user.role === 'super_admin' ? 'role-badge-super' : (user.role === 'admin' ? 'role-badge-admin' : 'role-badge-user')"
+              >
+                {{ user.role === 'super_admin' ? '⚡ Super Admin' : (user.role === 'admin' ? '👑 Quản trị viên' : '👤 Cán bộ') }}
               </span>
             </td>
 
@@ -72,7 +83,7 @@
                 </button>
 
                 <button 
-                  v-if="user.email !== currentUser.email"
+                  v-if="user.email !== currentUser.email && user.role !== 'super_admin'"
                   class="btn-action btn-lock"
                   :title="user.is_active ? 'Khóa tài khoản này' : 'Mở khóa tài khoản'"
                   @click="$emit('toggle-status', user)"
@@ -81,7 +92,7 @@
                 </button>
 
                 <button 
-                  v-if="user.email !== currentUser.email"
+                  v-if="user.email !== currentUser.email && user.role !== 'super_admin'"
                   class="btn-action btn-delete"
                   title="Xóa tài khoản khỏi hệ thống"
                   @click="$emit('delete-user', user)"
@@ -92,7 +103,7 @@
             </td>
           </tr>
           <tr v-if="filteredUsers.length === 0">
-            <td colspan="6" class="empty-cell">Không tìm thấy cán bộ nào phù hợp</td>
+            <td colspan="7" class="empty-cell">Không tìm thấy cán bộ nào phù hợp</td>
           </tr>
         </tbody>
       </table>
@@ -105,6 +116,10 @@ import { computed } from 'vue';
 
 const props = defineProps({
   users: {
+    type: Array,
+    default: () => [],
+  },
+  teams: {
     type: Array,
     default: () => [],
   },
@@ -129,6 +144,12 @@ const filteredUsers = computed(() => {
   );
 });
 
+function getTeamName(teamId) {
+  if (!teamId) return 'Toàn hệ thống';
+  const t = (props.teams || []).find(item => item.id === teamId);
+  return t ? t.name : '—';
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '—';
   try {
@@ -145,8 +166,8 @@ function formatDate(dateStr) {
 .users-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding-bottom: 32px;
+  gap: 16px;
+  height: 100%;
 }
 
 .users-toolbar {
@@ -161,14 +182,15 @@ function formatDate(dateStr) {
 }
 
 .section-title {
-  font-size: 14.5px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--text-ink);
+  margin-bottom: 2px;
 }
 
 .section-sub {
   font-size: 12px;
-  color: var(--text-sub);
+  color: var(--text-muted);
 }
 
 .users-table-container {
@@ -181,21 +203,18 @@ function formatDate(dateStr) {
 .users-table {
   width: 100%;
   border-collapse: collapse;
+  font-size: 12.5px;
   text-align: left;
-  font-size: 13px;
-  table-layout: auto;
 }
 
 .users-table th {
   background-color: var(--bg-sub);
-  color: var(--text-sub);
+  color: var(--text-muted);
   font-weight: 700;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
 }
 
 .users-table td {
@@ -203,10 +222,6 @@ function formatDate(dateStr) {
   border-bottom: 1px solid var(--border-sub);
   color: var(--text-ink);
   vertical-align: middle;
-}
-
-.users-table tr:last-child td {
-  border-bottom: none;
 }
 
 .users-table tr:hover td {
@@ -220,17 +235,17 @@ function formatDate(dateStr) {
 }
 
 .user-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background-color: var(--accent);
-  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background-color: var(--accent-sub);
+  color: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11.5px;
   font-weight: 700;
-  flex-shrink: 0;
+  font-size: 13px;
+  border: 1px solid var(--accent);
 }
 
 .user-cell-info {
@@ -241,52 +256,66 @@ function formatDate(dateStr) {
 
 .user-cell-name {
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .self-badge {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 11px;
   color: var(--accent);
-  background-color: var(--accent-sub);
-  padding: 1px 5px;
-  border-radius: var(--radius-pill);
+  font-weight: 700;
 }
 
 .email-cell {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.team-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-sub);
+  border: 1px solid var(--border);
   color: var(--text-muted);
 }
 
-.date-cell {
-  color: var(--text-sub);
-  font-size: 12px;
-  white-space: nowrap;
+.badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-block;
+}
+
+.role-badge-super {
+  background-color: #f3e8ff;
+  color: #7e22ce;
+  border: 1px solid #c084fc;
+}
+[data-theme="dark"] .role-badge-super {
+  background-color: #3b0764;
+  color: #d8b4fe;
+  border-color: #9333ea;
 }
 
 .role-badge-admin {
-  background-color: #fee2e2;
-  color: #dc2626;
-  border-color: #fca5a5;
+  background-color: #e0e7ff;
+  color: #3730a3;
 }
 [data-theme="dark"] .role-badge-admin {
-  background-color: #450a0a;
-  color: #f87171;
+  background-color: #1e1b4b;
+  color: #818cf8;
 }
 
 .role-badge-user {
-  background-color: #dbeafe;
-  color: #2563eb;
-  border-color: #93c5fd;
-}
-[data-theme="dark"] .role-badge-user {
-  background-color: #172554;
-  color: #60a5fa;
+  background-color: var(--bg-sub);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
 }
 
 .badge-active {
-  background-color: #d1fae5;
-  color: #059669;
-  border-color: #a7f3d0;
+  background-color: #dcfce7;
+  color: #15803d;
 }
 [data-theme="dark"] .badge-active {
   background-color: #064e3b;
@@ -295,21 +324,20 @@ function formatDate(dateStr) {
 
 .badge-inactive {
   background-color: #fee2e2;
-  color: #dc2626;
-  border-color: #fca5a5;
+  color: #b91c1c;
 }
 [data-theme="dark"] .badge-inactive {
   background-color: #450a0a;
   color: #f87171;
 }
 
-.td-actions {
-  text-align: right;
-  white-space: nowrap;
+.date-cell {
+  color: var(--text-sub);
+  font-size: 11.5px;
 }
 
 .actions-wrapper {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
@@ -318,26 +346,27 @@ function formatDate(dateStr) {
 .btn-action {
   padding: 4px 8px;
   font-size: 11.5px;
-  font-weight: 500;
+  font-weight: 600;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background-color: var(--bg-surface);
+  cursor: pointer;
   color: var(--text-ink);
-  transition: all 0.12s ease;
-}
-.btn-action:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--text-sub);
 }
 
-.btn-delete {
+.btn-action:hover {
+  background-color: var(--bg-hover);
+}
+
+.btn-lock:hover {
+  background-color: var(--warning-sub);
+  color: var(--warning);
+}
+
+.btn-delete:hover {
+  background-color: var(--danger-sub);
   color: var(--danger);
   border-color: var(--danger);
-  background-color: var(--danger-sub);
-}
-.btn-delete:hover {
-  background-color: var(--danger);
-  color: #fff;
 }
 
 .empty-cell {

@@ -200,29 +200,21 @@
             <div class="form-group">
               <label class="form-label">Thời hạn hoàn thành</label>
               <template v-if="isAdmin">
-                <div class="date-presets">
-                  <button type="button" class="preset-btn" @click="setPreset('today')">Hôm nay 17h</button>
-                  <button type="button" class="preset-btn" @click="setPreset('tomorrow')">Ngày mai 17h</button>
-                  <button type="button" class="preset-btn" @click="setPreset('3days')">3 ngày tới</button>
-                  <button type="button" class="preset-btn" @click="setPreset('1week')">1 tuần tới</button>
-                </div>
                 <div class="datetime-inputs">
                   <div class="datetime-field">
                     <input v-model="datePart" type="date" class="form-control" required />
-                    <Calendar class="datetime-icon" :size="16" :stroke-width="2" />
                   </div>
                   <div class="datetime-field">
                     <input v-model="timePart" type="time" class="form-control" required />
-                    <Clock class="datetime-icon" :size="16" :stroke-width="2" />
                   </div>
                 </div>
                 <!-- Vietnamese Date Preview for Admin -->
-                <div v-if="datePart" class="form-hint date-preview-hint">
-                  📅 Hạn chót: <strong>{{ formattedDueDateView }}</strong>
+                <div v-if="datePart" class="form-hint due-hint">
+                  Hạn chót: <strong>{{ formattedDueDateView }}</strong>
                 </div>
               </template>
               <div v-else class="readonly-box">
-                📅 {{ formattedDueDateView }}
+                Hạn chót: <strong>{{ formattedDueDateView }}</strong>
               </div>
             </div>
 
@@ -241,14 +233,17 @@
                   {{ d }} ngày
                 </button>
               </div>
-              <span class="form-hint">{{ remindHint }}</span>
+              <span v-if="datePart" class="form-hint">
+                Nhắc lúc <strong>{{ remindDateTimeStr }}</strong> ({{ form.remind_before_days }} ngày trước hạn)
+              </span>
+              <span v-else class="form-hint">Chọn hạn chót để tính ngày nhắc.</span>
             </div>
 
             <div class="form-group">
               <label class="form-label">Phân công người thực hiện</label>
               <div v-if="isAdmin" class="assignee-select-box">
                 <div
-                  v-for="user in users"
+                  v-for="user in assignableUsers"
                   :key="user.email"
                   class="assignee-checkbox-item"
                   :class="{ selected: form.assigned_to.includes(user.email) }"
@@ -295,7 +290,6 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue';
-import { Calendar, Clock } from 'lucide-vue-next';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import RichEditor from './RichEditor.vue';
 import { api } from '../api.js';
@@ -313,13 +307,29 @@ const props = defineProps({
     type: Object,
     required: true,
   },
+  currentTeamId: {
+    type: String,
+    default: '',
+  },
+  currentWorkspaceId: {
+    type: String,
+    default: '',
+  },
+  workspaces: {
+    type: Array,
+    default: () => [],
+  },
 });
 
 const emit = defineEmits(['close', 'save', 'attachment-changed']);
 
 const isEdit = Boolean(props.taskData && props.taskData.id);
-const isAdmin = computed(() => props.currentUser.role === 'admin');
+const isAdmin = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'super_admin');
 const loading = ref(false);
+
+const assignableUsers = computed(() => {
+  return (props.users || []).filter((u) => u.role !== 'super_admin');
+});
 
 const datePart = ref('');
 const timePart = ref('17:00');
@@ -343,7 +353,15 @@ const form = reactive({
   status: 'TODO',
   assigned_to: [],
   remind_before_days: 2,
+  workspace_id: props.taskData?.workspace_id || props.currentWorkspaceId || '',
 });
+
+function setDefaultDueDate() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  datePart.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  timePart.value = '17:00';
+}
 
 onMounted(async () => {
   storageConfigured.value = await api.isStorageConfigured();
@@ -353,7 +371,8 @@ onMounted(async () => {
     form.description = props.taskData.description || '';
     form.priority = props.taskData.priority || 'Medium';
     form.status = props.taskData.status || 'TODO';
-    const validEmails = new Set((props.users || []).map((u) => u.email));
+    form.workspace_id = props.taskData.workspace_id || props.currentWorkspaceId || '';
+    const validEmails = new Set(assignableUsers.value.map((u) => u.email));
     form.assigned_to = (props.taskData.assigned_to || []).filter((email) => validEmails.has(email));
     form.remind_before_days = props.taskData.remind_before_days || 2;
     attachments.value = [...(props.taskData.attachments || [])];
@@ -365,13 +384,13 @@ onMounted(async () => {
         datePart.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
         timePart.value = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
       } catch {
-        setPreset('today');
+        setDefaultDueDate();
       }
     } else {
-      setPreset('today');
+      setDefaultDueDate();
     }
   } else {
-    setPreset('today');
+    setDefaultDueDate();
   }
 });
 
@@ -387,9 +406,9 @@ const formattedDueDateView = computed(() => {
   return `${time} ${datePart.value}`;
 });
 
-// Vietnamese formatted reminder hint
-const remindHint = computed(() => {
-  if (!datePart.value) return 'Chọn hạn chót để tính ngày nhắc.';
+// Vietnamese formatted reminder datetime
+const remindDateTimeStr = computed(() => {
+  if (!datePart.value) return '';
   const due = new Date(`${datePart.value}T${timePart.value || '17:00'}:00`);
   due.setDate(due.getDate() - form.remind_before_days);
   const pad = (n) => String(n).padStart(2, '0');
@@ -397,24 +416,8 @@ const remindHint = computed(() => {
   const m = pad(due.getMonth() + 1);
   const y = due.getFullYear();
   const time = timePart.value || '17:00';
-  return `Nhắc lúc ${time} ngày ${d}/${m}/${y} (${form.remind_before_days} ngày trước hạn)`;
+  return `${time} ngày ${d}/${m}/${y}`;
 });
-
-function setPreset(preset) {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-
-  if (preset === 'tomorrow') {
-    d.setDate(d.getDate() + 1);
-  } else if (preset === '3days') {
-    d.setDate(d.getDate() + 3);
-  } else if (preset === '1week') {
-    d.setDate(d.getDate() + 7);
-  }
-
-  datePart.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  timePart.value = '17:00';
-}
 
 function toggleAssignee(email) {
   if (!isAdmin.value) return;
@@ -522,8 +525,12 @@ async function uploadSingleFile(file) {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
 
+  const teamId = props.taskData?.team_id || props.currentTeamId || null;
+  const workspaceId = form.workspace_id || props.taskData?.workspace_id || props.currentWorkspaceId || null;
   const taskId = props.taskData?.id || null;
   const newAttachment = await api.uploadAttachment(
+    teamId,
+    workspaceId,
     taskId,
     file.name,
     bytes,
@@ -691,6 +698,8 @@ function handleSubmit() {
       assigned_to: form.assigned_to,
       remind_before_days: form.remind_before_days,
       attachments: attachments.value,
+      team_id: props.taskData?.team_id || props.currentTeamId || null,
+      workspace_id: form.workspace_id || props.taskData?.workspace_id || props.currentWorkspaceId || null,
     });
   } else {
     loading.value = true;
@@ -1069,56 +1078,17 @@ function handleSubmit() {
 /* ==========================================
    SIDEBAR STYLING
 ========================================== */
-.date-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.preset-btn {
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.preset-btn:hover {
-  background-color: var(--bg-hover);
-}
-
 .datetime-inputs {
   display: flex;
   gap: 8px;
 }
 
 .datetime-field {
-  position: relative;
   flex: 1;
 }
 
-.datetime-icon {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  color: var(--text-sub);
-}
-
-.date-preview-hint {
-  margin-top: 6px;
-  color: var(--accent);
-  font-size: 12px;
-  background-color: var(--accent-sub);
-  border: 1px solid rgba(var(--accent-rgb, 14, 165, 233), 0.2);
-  padding: 5px 9px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.due-hint {
+  margin-top: 5px;
 }
 
 .remind-btns {
@@ -1221,6 +1191,11 @@ function handleSubmit() {
   font-size: 11.5px;
   color: var(--text-sub);
   line-height: 1.4;
+}
+
+.form-hint strong {
+  font-weight: 700;
+  color: var(--text-ink);
 }
 
 .view-assignees-box {

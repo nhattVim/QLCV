@@ -1,13 +1,50 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TeamDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub member_count: usize,
+    #[serde(default)]
+    pub workspace_count: usize,
+    #[serde(default)]
+    pub task_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkspaceDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub team_id: String,
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub task_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserSafe {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub email: String,
     pub full_name: String,
-    pub role: String, // "admin" or "user"
+    pub role: String, // "super_admin", "admin", "user"
     pub is_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
 }
@@ -29,6 +66,10 @@ pub struct TaskAttachment {
 pub struct TaskDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     pub title: String,
     pub description: String,
     pub assigned_to: Vec<String>,

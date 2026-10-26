@@ -3,9 +3,9 @@
     <!-- Action & Filter Bar (Matching Python Toolbar) -->
     <div class="filter-toolbar">
       <div class="toolbar-left">
-        <!-- Add Task Button (Admin only) -->
+        <!-- Add Task Button (Admin or Super Admin) -->
         <button 
-          v-if="currentUser.role === 'admin'"
+          v-if="canManage"
           class="btn-success"
           @click="$emit('add-task')"
         >
@@ -25,7 +25,7 @@
         </div>
 
         <!-- Assignee Filter (Admin only) -->
-        <div v-if="currentUser.role === 'admin'" class="filter-group">
+        <div v-if="canManage" class="filter-group">
           <label class="filter-label">Cán bộ:</label>
           <select v-model="filterUser" class="filter-select">
             <option value="ALL">Tất cả cán bộ</option>
@@ -84,10 +84,12 @@
 
     <!-- Active Filter Summary -->
     <div class="filter-summary">
-      <span>
-        Tổng số: <strong>{{ filteredTasks.length }}</strong> công việc
-        <span v-if="isFiltered" class="filter-active-tag">(đang lọc)</span>
-      </span>
+      <div class="summary-left">
+        <span>
+          Tổng số: <strong>{{ filteredTasks.length }}</strong> công việc
+          <span v-if="isFiltered" class="filter-active-tag">(đang lọc)</span>
+        </span>
+      </div>
       <button v-if="isFiltered" class="btn-reset" @click="resetFilters">
         Đặt lại bộ lọc
       </button>
@@ -129,7 +131,7 @@
           />
 
           <!-- Empty Column Notice -->
-          <div v-if="getColumnTasks(col.key).length === 0" class="kanban-empty">
+          <div class="kanban-empty">
             <span>Không có việc</span>
           </div>
         </div>
@@ -182,7 +184,7 @@
             </td>
             <td class="cell-actions">
               <div class="action-row">
-                <template v-if="currentUser.role === 'admin'">
+                <template v-if="canManage">
                   <button
                     v-if="task.status === 'REVIEW'"
                     class="btn-success btn-icon-action"
@@ -246,9 +248,19 @@ const props = defineProps({
     type: Object,
     required: true,
   },
+  workspaceName: {
+    type: String,
+    default: '',
+  },
+  teamName: {
+    type: String,
+    default: '',
+  },
 });
 
 const emit = defineEmits(['add-task', 'view-task', 'edit-task', 'delete-task', 'approve-task', 'status-change']);
+
+const canManage = computed(() => props.currentUser?.role === 'admin' || props.currentUser?.role === 'super_admin');
 
 const filterStatus = ref('ALL');
 const filterPriority = ref('ALL');
@@ -265,20 +277,38 @@ const kanbanColumns = [
 
 // SortableJS Drag & Drop Management
 let sortableInstances = [];
+let isDraggingCard = false;
 
-function initSortables() {
+function cleanupStrayFallbacks() {
+  if (isDraggingCard) return;
+  const fallbacks = document.querySelectorAll('.kanban-sortable-fallback');
+  fallbacks.forEach(el => {
+    try { el.remove(); } catch {}
+  });
+}
+
+function destroySortables() {
+  isDraggingCard = false;
+  cleanupStrayFallbacks();
   sortableInstances.forEach(inst => {
     try { inst.destroy(); } catch {}
   });
   sortableInstances = [];
+}
 
+function initSortables() {
   if (viewMode.value !== 'kanban') return;
+  if (isDraggingCard) return;
+
+  destroySortables();
 
   const colBodies = document.querySelectorAll('.kanban-col-body');
+  if (colBodies.length === 0) return;
+
   colBodies.forEach(el => {
     const sortable = new Sortable(el, {
       group: 'kanban-board',
-      animation: 200,
+      animation: 150,
       forceFallback: true,
       fallbackClass: 'kanban-sortable-fallback',
       fallbackOnBody: true,
@@ -290,7 +320,17 @@ function initSortables() {
       filter: '.admin-actions, .card-workflow, button, a',
       preventOnFilter: false,
       swapThreshold: 0.65,
+      onStart() {
+        isDraggingCard = true;
+      },
       onEnd(evt) {
+        isDraggingCard = false;
+        setTimeout(() => {
+          if (!isDraggingCard) {
+            cleanupStrayFallbacks();
+          }
+        }, 80);
+
         const taskId = evt.item?.getAttribute('data-task-id');
         const fromStatus = evt.from?.getAttribute('data-status');
         const toStatus = evt.to?.getAttribute('data-status');
@@ -300,7 +340,7 @@ function initSortables() {
         // Kéo thả sang cột khác -> đổi trạng thái
         if (fromStatus !== toStatus && toStatus) {
           if (toStatus === 'DONE') {
-            if (props.currentUser?.role === 'admin') {
+            if (canManage.value) {
               emit('approve-task', taskId);
             } else {
               // Cán bộ thường không được tự duyệt Hoàn thành, đưa vào REVIEW
@@ -317,20 +357,29 @@ function initSortables() {
   });
 }
 
+function onWindowBlur() {
+  isDraggingCard = false;
+  cleanupStrayFallbacks();
+}
+
 onMounted(() => {
   nextTick(initSortables);
+  window.addEventListener('blur', onWindowBlur);
 });
 
 onUnmounted(() => {
-  sortableInstances.forEach(inst => {
-    try { inst.destroy(); } catch {}
-  });
-  sortableInstances = [];
+  destroySortables();
+  window.removeEventListener('blur', onWindowBlur);
 });
 
-watch([() => props.tasks, viewMode, filterStatus, filterPriority, filterUser, searchKeyword], () => {
-  nextTick(initSortables);
-}, { deep: true });
+// Chỉ cần khởi tạo lại Sortable khi chuyển qua lại giữa chế độ Kanban và Table
+watch(viewMode, (mode) => {
+  if (mode === 'kanban') {
+    nextTick(initSortables);
+  } else {
+    destroySortables();
+  }
+});
 
 const isFiltered = computed(() => {
   return filterStatus.value !== 'ALL' || 
@@ -422,9 +471,7 @@ function getAssigneesText(assignees) {
 
 function plainDescription(html) {
   if (!html) return '';
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  return (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+  return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function formatDueDate(dueStr) {
@@ -559,6 +606,28 @@ function isOverdue(task) {
   padding: 0 4px;
 }
 
+.summary-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.badge-current-ws {
+  background-color: var(--accent-sub);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+}
+
+.badge-team-name {
+  font-weight: 400;
+  opacity: 0.85;
+  margin-left: 3px;
+}
+
 .filter-active-tag {
   color: var(--warning);
   font-weight: 600;
@@ -643,6 +712,7 @@ function isOverdue(task) {
 }
 
 .kanban-col-body {
+  position: relative;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -654,14 +724,29 @@ function isOverdue(task) {
 }
 
 .kanban-empty {
+  display: none;
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
   padding: 24px 12px;
   text-align: center;
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-sub);
   font-size: 12px;
-  margin-top: 4px;
   pointer-events: none;
+}
+
+/* Hiện ô "Không có việc" khi trong cột không có bất kỳ thẻ nào (.task-card) và không có bóng mờ (.kanban-sortable-ghost) */
+.kanban-col-body:not(:has(.task-card)):not(:has(.kanban-sortable-ghost)) .kanban-empty {
+  display: block !important;
+}
+
+/* Ẩn ô "Không có việc" khi trong cột có thẻ hoặc có bóng mờ */
+.kanban-col-body:has(.task-card) .kanban-empty,
+.kanban-col-body:has(.kanban-sortable-ghost) .kanban-empty {
+  display: none !important;
 }
 
 /* ================= TABLE VIEW ================= */

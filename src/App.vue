@@ -22,15 +22,33 @@
       @toggle-theme="toggleTheme"
     />
 
-    <!-- 2. Main Desktop Workstation (Matches Python Layout) -->
+    <!-- 2. Main Desktop Workstation -->
     <div v-else class="app-workstation">
-      <!-- Top Header Bar (Matching Python _build_header) -->
+      <!-- Top Header Bar -->
       <header class="app-header">
         <div class="header-left">
           <span class="header-icon">💼</span>
-          <h1 class="header-title">
-            {{ currentUser.role === 'admin' ? 'QLCV - BẢNG ĐIỀU KHIỂN QUẢN TRỊ VIÊN' : 'QLCV - KHÔNG GIAN LÀM VIỆC CÁ NHÂN' }}
-          </h1>
+          <h1 class="header-title">QLCV</h1>
+
+          <!-- Super Admin Team Quick Selector -->
+          <div v-if="isSuperAdmin && teams.length > 0" class="header-select-group" title="Chọn Team để xem dữ liệu">
+            <span class="header-select-icon">🏢</span>
+            <select v-model="currentTeamId" class="header-select header-team-select" @change="onTeamSelectChange">
+              <option v-for="t in teams" :key="t.id" :value="t.id">
+                Team: {{ t.name }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Quick Workspace Selector (On Title Bar) -->
+          <div v-if="workspaces.length > 0" class="header-select-group" title="Chọn nhanh không gian làm việc">
+            <span class="header-select-icon">📁</span>
+            <select v-model="currentWorkspaceId" class="header-select header-ws-select" @change="onWorkspaceSelectChange">
+              <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
+                {{ ws.name }}
+              </option>
+            </select>
+          </div>
         </div>
 
         <div class="header-right">
@@ -47,18 +65,25 @@
             <span class="update-badge">Tải ngay ⬇️</span>
           </button>
 
+          <!-- User Greeting -->
           <div class="user-greeting">
             Xin chào, <strong>{{ currentUser.full_name }}</strong> ({{ currentUser.email }})
-            <span class="role-badge" :class="currentUser.role === 'admin' ? 'badge-admin' : 'badge-user'">
-              {{ currentUser.role === 'admin' ? 'Quản trị' : 'Cán bộ' }}
+            <span class="role-badge" :class="`badge-${currentUser.role}`">
+              {{ roleDisplayName }}
             </span>
           </div>
 
           <button class="btn-secondary btn-header" title="Đổi chế độ Sáng / Tối" @click="toggleTheme">
             🌓 Đổi Theme
           </button>
-          <button class="btn-secondary btn-header" title="Làm mới dữ liệu từ MongoDB Atlas" @click="refreshData">
-            ↻ Làm mới
+          <button 
+            class="btn-secondary btn-header" 
+            :disabled="isRefreshing"
+            title="Làm mới toàn bộ dữ liệu (Đội nhóm, Không gian, Công việc, Thống kê)" 
+            @click="refreshData"
+          >
+            <span :class="{ 'spin-icon': isRefreshing }">↻</span>
+            {{ isRefreshing ? 'Đang tải...' : 'Làm mới' }}
           </button>
           <button class="btn-danger btn-header" title="Đăng xuất khỏi hệ thống" @click="onLogout">
             🚪 Đăng xuất
@@ -66,7 +91,7 @@
         </div>
       </header>
 
-      <!-- Stat Metric Banner (Matching Python _create_stat_card 6 Cards) -->
+      <!-- Stat Metric Banner -->
       <section class="stat-banner">
         <div class="stat-card" style="border-top-color: #6366f1;">
           <span class="stat-label" style="color: #6366f1;">TỔNG CÔNG VIỆC</span>
@@ -99,70 +124,122 @@
         </div>
       </section>
 
+      <!-- Workspace Navigation Tabs -->
       <section class="workspace-main">
-      <nav class="tabs-nav">
-        <button 
-          class="tab-btn" 
-          :class="{ active: currentTab === 'tasks' }"
-          @click="currentTab = 'tasks'"
-        >
-          Quản lý Công việc ({{ tasks.length }})
-        </button>
+        <nav class="tabs-nav">
+          <!-- 1. Super Admin: Tab Teams -->
+          <button 
+            v-if="isSuperAdmin"
+            class="tab-btn" 
+            :class="{ active: currentTab === 'teams' }"
+            @click="currentTab = 'teams'"
+          >
+            🏢 Quản lý Đội nhóm ({{ teams.length }})
+          </button>
 
-        <button 
-          v-if="currentUser.role === 'admin'"
-          class="tab-btn" 
-          :class="{ active: currentTab === 'users' }"
-          @click="currentTab = 'users'"
-        >
-          Danh bạ Cán bộ ({{ users.length }})
-        </button>
+          <!-- 2. Workspaces Tab (Available for all) -->
+          <button 
+            class="tab-btn" 
+            :class="{ active: currentTab === 'workspaces' }"
+            @click="currentTab = 'workspaces'"
+          >
+            📁 Không gian làm việc ({{ workspaces.length }})
+          </button>
 
-        <button 
-          v-if="currentUser.role === 'admin'"
-          class="tab-btn" 
-          :class="{ active: currentTab === 'reports' }"
-          @click="currentTab = 'reports'"
-        >
-          Giám sát & Báo cáo Tiến độ
-        </button>
-      </nav>
+          <!-- 3. Tasks Tab (Tickets of current workspace) -->
+          <button 
+            class="tab-btn" 
+            :class="{ active: currentTab === 'tasks' }"
+            @click="currentTab = 'tasks'"
+          >
+            📋 Quản lý Công việc ({{ tasks.length }})
+          </button>
 
-      <main class="tab-content">
-        <!-- Tab 1: Tasks (Kanban Board Jira / Trello) -->
-        <TasksView 
-          v-if="currentTab === 'tasks'"
-          :tasks="tasks"
-          :users="users"
-          :user-map="userMap"
-          :current-user="currentUser"
-          @add-task="openNewTaskModal"
-          @view-task="openViewTaskModal"
-          @edit-task="openEditTaskModal"
-          @delete-task="confirmDeleteTask"
-          @approve-task="quickApproveTask"
-          @status-change="onStatusChange"
-        />
+          <!-- 4. Users Tab (Admin & Super Admin) -->
+          <button 
+            v-if="isAdmin"
+            class="tab-btn" 
+            :class="{ active: currentTab === 'users' }"
+            @click="currentTab = 'users'"
+          >
+            👥 Danh bạ Cán bộ ({{ users.length }})
+          </button>
 
-        <!-- Tab 2: Users (Admin Only) -->
-        <UsersView 
-          v-else-if="currentTab === 'users' && currentUser.role === 'admin'"
-          :users="users"
-          :current-user="currentUser"
-          @add-user="openNewUserModal"
-          @edit-user="openEditUserModal"
-          @toggle-status="toggleUserStatus"
-          @delete-user="confirmDeleteUser"
-        />
+          <!-- 5. Reports Tab (Admin & Super Admin) -->
+          <button 
+            v-if="isAdmin"
+            class="tab-btn" 
+            :class="{ active: currentTab === 'reports' }"
+            @click="currentTab = 'reports'"
+          >
+            📊 Giám sát & Báo cáo
+          </button>
+        </nav>
 
-        <!-- Tab 3: Reports (Admin Only) -->
-        <ReportsView 
-          v-else-if="currentTab === 'reports' && currentUser.role === 'admin'"
-          :tasks="tasks"
-          :users="users"
-          :user-map="userMap"
-        />
-      </main>
+        <main class="tab-content">
+          <!-- Tab 1: Teams (Super Admin Only) -->
+          <TeamsView 
+            v-if="currentTab === 'teams' && isSuperAdmin"
+            :teams="teams"
+            :current-team-id="currentTeamId"
+            @select-team="onSelectTeamFromView"
+            @create-team="onCreateTeam"
+            @update-team="onUpdateTeam"
+            @delete-team="onDeleteTeam"
+          />
+
+          <!-- Tab 2: Workspaces -->
+          <WorkspacesView 
+            v-else-if="currentTab === 'workspaces'"
+            :workspaces="workspaces"
+            :current-workspace-id="currentWorkspaceId"
+            :current-user="currentUser"
+            :team-name="currentTeam?.name"
+            @select-workspace="onSelectWorkspaceFromView"
+            @create-workspace="onCreateWorkspace"
+            @update-workspace="onUpdateWorkspace"
+            @delete-workspace="onDeleteWorkspace"
+          />
+
+          <!-- Tab 3: Tasks (Tickets of current workspace) -->
+          <TasksView 
+            v-else-if="currentTab === 'tasks'"
+            :tasks="tasks"
+            :users="users"
+            :user-map="userMap"
+            :current-user="currentUser"
+            :workspace-name="currentWorkspace?.name"
+            :team-name="currentTeam?.name"
+            @add-task="openNewTaskModal"
+            @view-task="openViewTaskModal"
+            @edit-task="openEditTaskModal"
+            @delete-task="confirmDeleteTask"
+            @approve-task="quickApproveTask"
+            @status-change="onStatusChange"
+          />
+
+          <!-- Tab 4: Users (Admin & Super Admin) -->
+          <UsersView 
+            v-else-if="currentTab === 'users' && isAdmin"
+            :users="users"
+            :teams="teams"
+            :current-user="currentUser"
+            @add-user="openNewUserModal"
+            @edit-user="openEditUserModal"
+            @toggle-status="toggleUserStatus"
+            @delete-user="confirmDeleteUser"
+          />
+
+          <!-- Tab 5: Reports (Admin & Super Admin) -->
+          <ReportsView 
+            v-else-if="currentTab === 'reports' && isAdmin"
+            :tasks="tasks"
+            :users="users"
+            :user-map="userMap"
+            :team-name="currentTeam?.name"
+            :workspace-name="currentWorkspace?.name"
+          />
+        </main>
       </section>
     </div>
 
@@ -173,6 +250,9 @@
       :task-data="selectedTask"
       :users="users"
       :current-user="currentUser"
+      :current-team-id="currentTeamId"
+      :current-workspace-id="currentWorkspaceId"
+      :workspaces="workspaces"
       @close="showTaskModal = false"
       @save="onSaveTask"
       @attachment-changed="onAttachmentChanged"
@@ -182,19 +262,24 @@
     <UserModal 
       v-if="showUserModal"
       :user-data="selectedUser"
+      :teams="teams"
+      :current-team-id="currentTeamId"
+      :current-user="currentUser"
       @close="showUserModal = false"
       @save="onSaveUser"
     />
 
-    <!-- Confirmation Dialog -->
-    <div v-if="confirmDialog.show" class="modal-overlay" @click.self="confirmDialog.show = false">
-      <div class="modal-content" style="max-width: 440px;">
+    <!-- Global Confirmation Dialog -->
+    <div v-if="confirmDialog.show" class="modal-backdrop" @click.self="confirmDialog.show = false">
+      <div class="modal-dialog">
         <div class="modal-header">
           <h3 class="modal-title">{{ confirmDialog.title }}</h3>
           <button class="btn-ghost" @click="confirmDialog.show = false">✕</button>
         </div>
         <div class="modal-body">
-          <p style="font-size: 13.5px; line-height: 1.5; white-space: pre-line;">{{ confirmDialog.message }}</p>
+          <p style="white-space: pre-wrap; font-size: 13.5px; line-height: 1.5;">
+            {{ confirmDialog.message }}
+          </p>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" @click="confirmDialog.show = false">Hủy bỏ</button>
@@ -202,6 +287,7 @@
         </div>
       </div>
     </div>
+
     <!-- Update Modal -->
     <UpdateModal 
       :show="showUpdateModal"
@@ -225,6 +311,8 @@ import UserModal from './components/UserModal.vue';
 import UpdateModal from './components/UpdateModal.vue';
 
 import LoginView from './views/LoginView.vue';
+import TeamsView from './views/TeamsView.vue';
+import WorkspacesView from './views/WorkspacesView.vue';
 import TasksView from './views/TasksView.vue';
 import UsersView from './views/UsersView.vue';
 import ReportsView from './views/ReportsView.vue';
@@ -234,6 +322,12 @@ const toastRef = ref(null);
 const currentUser = ref(null);
 const currentTab = ref('tasks');
 const isDark = ref(false);
+
+const teams = ref([]);
+const currentTeamId = ref('');
+
+const workspaces = ref([]);
+const currentWorkspaceId = ref('');
 
 const tasks = ref([]);
 const users = ref([]);
@@ -245,6 +339,8 @@ const stats = ref({
   done: 0,
   overdue: 0,
 });
+
+const isRefreshing = ref(false);
 
 // Modals
 const showTaskModal = ref(false);
@@ -266,34 +362,40 @@ const updateInfo = shallowRef(null);
 const showUpdateModal = ref(false);
 const currentAppVersion = ref('1.0.0');
 
-async function checkForAppUpdates(silent = true) {
-  try {
-    const update = await check();
-    if (update && update.available) {
-      updateAvailable.value = true;
-      updateInfo.value = markRaw(update);
-      console.log('New update available:', update.version);
-      if (!silent) {
-        showUpdateModal.value = true;
-      }
-    } else {
-      updateAvailable.value = false;
-      if (!silent) {
-        toastRef.value?.show('Bạn đang sử dụng phiên bản mới nhất!', 'success');
-      }
-    }
-  } catch (err) {
-    console.warn('Check update notice:', err);
-    if (!silent) {
-      toastRef.value?.show(`Lỗi kiểm tra cập nhật: ${err}`, 'error');
-    }
-  }
-}
+// Computeds
+const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin');
+const isAdmin = computed(() => currentUser.value?.role === 'admin' || isSuperAdmin.value);
 
-function onAppUpdated() {
-  updateAvailable.value = false;
-  showUpdateModal.value = false;
-}
+const currentTeam = computed(() => {
+  return teams.value.find(t => t.id === currentTeamId.value) || null;
+});
+
+const currentWorkspace = computed(() => {
+  return workspaces.value.find(w => w.id === currentWorkspaceId.value) || null;
+});
+
+const roleDisplayName = computed(() => {
+  if (isSuperAdmin.value) return 'Super Admin';
+  if (currentUser.value?.role === 'admin') return 'Quản trị Team';
+  return 'Cán bộ';
+});
+
+const headerTitle = computed(() => {
+  if (!currentUser.value) return 'QLCV';
+  if (isSuperAdmin.value) {
+    return currentTeam.value 
+      ? `QLCV - SUPER ADMIN [${currentTeam.value.name.toUpperCase()}]`
+      : 'QLCV - BẢNG ĐIỀU KHIỂN SUPER ADMIN';
+  }
+  if (isAdmin.value) {
+    return currentTeam.value 
+      ? `QLCV - QUẢN TRỊ [${currentTeam.value.name.toUpperCase()}]`
+      : 'QLCV - BẢNG ĐIỀU KHIỂN QUẢN TRỊ';
+  }
+  return currentTeam.value 
+    ? `QLCV - [${currentTeam.value.name.toUpperCase()}]`
+    : 'QLCV - KHÔNG GIAN LÀM VIỆC CÁ NHÂN';
+});
 
 // Map of email -> Full Name
 const userMap = computed(() => {
@@ -321,7 +423,7 @@ onMounted(async () => {
       const user = JSON.parse(savedSession);
       if (user && user.email) {
         currentUser.value = user;
-        await refreshData();
+        await initAppData();
       }
     } catch {
       localStorage.removeItem('qlcv_session');
@@ -352,7 +454,7 @@ function onKeyDown(e) {
     showUserModal.value = false;
     confirmDialog.show = false;
   } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
-    if (currentUser.value?.role === 'admin') {
+    if (isAdmin.value) {
       e.preventDefault();
       openNewTaskModal();
     }
@@ -370,11 +472,10 @@ function toggleTheme() {
   applyTheme(isDark.value ? 'dark' : 'light');
 }
 
-function onLoginSuccess(user) {
+async function onLoginSuccess(user) {
   currentUser.value = user;
-  currentTab.value = 'tasks';
   toastRef.value?.success(`Chào mừng ${user.full_name} đã đăng nhập!`);
-  refreshData();
+  await initAppData();
 }
 
 function onLogout() {
@@ -383,41 +484,304 @@ function onLogout() {
   currentUser.value = null;
   tasks.value = [];
   users.value = [];
+  teams.value = [];
+  workspaces.value = [];
+  currentTeamId.value = '';
+  currentWorkspaceId.value = '';
   toastRef.value?.info('Đã đăng xuất khỏi hệ thống');
 }
 
-// Data fetching
-async function refreshData() {
+// ==========================================
+// DATA INITIALIZATION & RESTORATION
+// ==========================================
+
+async function initAppData(retries = 3) {
   if (!currentUser.value) return;
 
   try {
-    const isUserRole = currentUser.value.role !== 'admin';
-    const forUserEmail = isUserRole ? currentUser.value.email : null;
+    // 1. Fetch Teams with automatic retry on startup
+    let loadedTeams = null;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        loadedTeams = await api.getTeams();
+        break;
+      } catch (e) {
+        if (attempt === retries) throw e;
+        await new Promise(r => setTimeout(r, 400));
+      }
+    }
+    teams.value = loadedTeams || [];
 
-    // Load users
-    users.value = await api.getUsers();
+    // 2. Determine active team
+    const savedTeamKey = 'qlcv_last_team_' + currentUser.value.email;
+    const savedTeamId = localStorage.getItem(savedTeamKey);
 
-    // Load tasks
-    tasks.value = await api.getTasks(null, null, forUserEmail);
+    if (savedTeamId && teams.value.some(t => t.id === savedTeamId)) {
+      currentTeamId.value = savedTeamId;
+    } else if (currentUser.value.team_id && teams.value.some(t => t.id === currentUser.value.team_id)) {
+      currentTeamId.value = currentUser.value.team_id;
+    } else if (teams.value.length > 0) {
+      currentTeamId.value = teams.value[0].id;
+    } else {
+      currentTeamId.value = '';
+    }
 
-    // Load stats
-    stats.value = await api.getDashboardStats(forUserEmail);
+    if (currentTeamId.value) {
+      localStorage.setItem(savedTeamKey, currentTeamId.value);
+    }
 
-    toastRef.value?.info('Dữ liệu đã được làm mới');
+    // 3. Fetch Workspaces for current team
+    await loadWorkspacesForCurrentTeam();
+
+    // 4. Set default tab to 'tasks' as requested
+    currentTab.value = 'tasks';
+
+    // 5. Load tasks, users, and stats
+    await refreshScopedData();
   } catch (err) {
-    console.error('Error refreshing data:', err);
-    toastRef.value?.warning('Không thể đồng bộ dữ liệu. Kiểm tra kết nối mạng!');
+    console.error('Error in initAppData:', err);
+    toastRef.value?.warning('Đang chờ kết nối dữ liệu từ máy chủ...');
   }
 }
 
-// Task Handlers
-function openNewTaskModal() {
-  selectedTask.value = null;
-  showTaskModal.value = true;
+async function loadWorkspacesForCurrentTeam() {
+  if (!currentTeamId.value) {
+    workspaces.value = [];
+    currentWorkspaceId.value = '';
+    return;
+  }
+
+  workspaces.value = await api.getWorkspaces(currentTeamId.value);
+
+  const savedWsKey = `qlcv_last_ws_${currentUser.value.email}_${currentTeamId.value}`;
+  const savedWsId = localStorage.getItem(savedWsKey);
+
+  if (savedWsId && workspaces.value.some(w => w.id === savedWsId)) {
+    currentWorkspaceId.value = savedWsId;
+  } else if (workspaces.value.length > 0) {
+    currentWorkspaceId.value = workspaces.value[0].id;
+  } else {
+    currentWorkspaceId.value = '';
+  }
+
+  if (currentWorkspaceId.value) {
+    localStorage.setItem(savedWsKey, currentWorkspaceId.value);
+  }
 }
 
-function openNewTaskWithStatus(statusKey) {
-  selectedTask.value = { status: statusKey };
+function updateLocalStats() {
+  const now = new Date();
+  const list = tasks.value || [];
+  stats.value = {
+    total: list.length,
+    todo: list.filter(t => t.status === 'TODO').length,
+    in_progress: list.filter(t => t.status === 'IN_PROGRESS').length,
+    review: list.filter(t => t.status === 'REVIEW').length,
+    done: list.filter(t => t.status === 'DONE').length,
+    overdue: list.filter(t => {
+      if (t.status === 'DONE' || !t.due_date) return false;
+      return new Date(t.due_date) < now;
+    }).length,
+  };
+}
+
+// Refresh tasks, users, and stats according to selected team and workspace
+async function refreshScopedData() {
+  if (!currentUser.value) return;
+
+  try {
+    const isRegularUser = currentUser.value.role === 'user';
+    const forUserEmail = isRegularUser ? currentUser.value.email : null;
+
+    // Load in parallel with Promise.all for 3x faster response
+    const [loadedUsers, loadedTasks, loadedStats] = await Promise.all([
+      api.getUsers(currentTeamId.value || null),
+      api.getTasks(
+        currentTeamId.value || null,
+        currentWorkspaceId.value || null,
+        null,
+        null,
+        forUserEmail
+      ),
+      api.getDashboardStats(
+        currentTeamId.value || null,
+        currentWorkspaceId.value || null,
+        forUserEmail
+      ),
+    ]);
+
+    users.value = loadedUsers;
+    tasks.value = loadedTasks;
+    stats.value = loadedStats;
+  } catch (err) {
+    console.error('Error refreshing scoped data:', err);
+  }
+}
+
+async function refreshData() {
+  if (!currentUser.value || isRefreshing.value) return;
+  isRefreshing.value = true;
+
+  try {
+    // 1. Tải mới toàn bộ danh sách Đội nhóm (Teams)
+    teams.value = await api.getTeams();
+
+    // 2. Đồng bộ và kiểm tra Team ID hiện tại
+    if (currentUser.value.role !== 'super_admin') {
+      if (currentUser.value.team_id) {
+        currentTeamId.value = currentUser.value.team_id;
+      } else if (teams.value.length > 0 && !teams.value.some(t => t.id === currentTeamId.value)) {
+        currentTeamId.value = teams.value[0].id;
+      }
+    } else {
+      // Super Admin: nếu team đang chọn không còn hợp lệ thì fallback về team đầu tiên
+      if (currentTeamId.value && !teams.value.some(t => t.id === currentTeamId.value)) {
+        currentTeamId.value = teams.value[0]?.id || '';
+      } else if (!currentTeamId.value && teams.value.length > 0) {
+        currentTeamId.value = teams.value[0].id;
+      }
+    }
+
+    // 3. Tải mới danh sách Không gian làm việc (Workspaces) của team hiện tại
+    await loadWorkspacesForCurrentTeam();
+
+    // 4. Tải mới Công việc (Tasks), Cán bộ (Users) và Thống kê (Stats)
+    await refreshScopedData();
+
+    toastRef.value?.info('Đã làm mới dữ liệu Đội nhóm, Không gian & Công việc!');
+  } catch (err) {
+    console.error('Lỗi refreshData:', err);
+    toastRef.value?.warning('Lỗi làm mới dữ liệu!');
+  } finally {
+    isRefreshing.value = false;
+  }
+}
+
+// ==========================================
+// SELECTION HANDLERS
+// ==========================================
+
+async function onTeamSelectChange() {
+  if (!currentUser.value) return;
+  localStorage.setItem('qlcv_last_team_' + currentUser.value.email, currentTeamId.value);
+
+  await loadWorkspacesForCurrentTeam();
+  await refreshScopedData();
+  toastRef.value?.info(`Đang truy cập: ${currentTeam.value?.name || 'Team'}`);
+}
+
+async function onWorkspaceSelectChange() {
+  if (!currentUser.value) return;
+  if (currentTeamId.value) {
+    localStorage.setItem(`qlcv_last_ws_${currentUser.value.email}_${currentTeamId.value}`, currentWorkspaceId.value);
+  }
+  await refreshScopedData();
+}
+
+async function onSelectTeamFromView(teamId) {
+  currentTeamId.value = teamId;
+  await onTeamSelectChange();
+  currentTab.value = 'workspaces';
+}
+
+async function onSelectWorkspaceFromView(workspaceId) {
+  currentWorkspaceId.value = workspaceId;
+  await onWorkspaceSelectChange();
+  currentTab.value = 'tasks';
+  toastRef.value?.success(`Đang mở: ${currentWorkspace.value?.name || 'Không gian làm việc'}`);
+}
+
+// ==========================================
+// TEAMS CRUD (SUPER ADMIN)
+// ==========================================
+
+async function onCreateTeam({ name, description }) {
+  try {
+    const newTeam = await api.createTeam(name, description);
+    teams.value = await api.getTeams();
+    currentTeamId.value = newTeam.id;
+    await onTeamSelectChange();
+    toastRef.value?.success(`Đã tạo đội nhóm "${name}" thành công!`);
+  } catch (err) {
+    toastRef.value?.error(`Lỗi tạo team: ${err}`);
+  }
+}
+
+async function onUpdateTeam({ id, name, description }) {
+  try {
+    await api.updateTeam(id, name, description);
+    teams.value = await api.getTeams();
+    toastRef.value?.success(`Đã cập nhật đội nhóm "${name}"!`);
+  } catch (err) {
+    toastRef.value?.error(`Lỗi cập nhật team: ${err}`);
+  }
+}
+
+async function onDeleteTeam(teamId) {
+  try {
+    await api.deleteTeam(teamId);
+    teams.value = await api.getTeams();
+    if (currentTeamId.value === teamId) {
+      currentTeamId.value = teams.value[0]?.id || '';
+      await onTeamSelectChange();
+    }
+    toastRef.value?.success('Đã xóa đội nhóm thành công!');
+  } catch (err) {
+    toastRef.value?.error(`Lỗi xóa team: ${err}`);
+  }
+}
+
+// ==========================================
+// WORKSPACES CRUD
+// ==========================================
+
+async function onCreateWorkspace({ name, description }) {
+  try {
+    const newWs = await api.createWorkspace(
+      currentTeamId.value,
+      name,
+      description,
+      currentUser.value.email
+    );
+    await loadWorkspacesForCurrentTeam();
+    currentWorkspaceId.value = newWs.id;
+    await onWorkspaceSelectChange();
+    toastRef.value?.success(`Đã tạo không gian làm việc "${name}"!`);
+  } catch (err) {
+    toastRef.value?.error(`Lỗi tạo không gian: ${err}`);
+  }
+}
+
+async function onUpdateWorkspace({ id, name, description }) {
+  try {
+    await api.updateWorkspace(id, name, description);
+    await loadWorkspacesForCurrentTeam();
+    toastRef.value?.success(`Đã cập nhật không gian làm việc "${name}"!`);
+  } catch (err) {
+    toastRef.value?.error(`Lỗi cập nhật không gian: ${err}`);
+  }
+}
+
+async function onDeleteWorkspace(workspaceId) {
+  try {
+    await api.deleteWorkspace(workspaceId);
+    await loadWorkspacesForCurrentTeam();
+    await refreshScopedData();
+    toastRef.value?.success('Đã xóa không gian làm việc!');
+  } catch (err) {
+    toastRef.value?.error(`Lỗi xóa không gian: ${err}`);
+  }
+}
+
+// ==========================================
+// TASK HANDLERS
+// ==========================================
+
+function openNewTaskModal() {
+  selectedTask.value = {
+    workspace_id: currentWorkspaceId.value,
+    team_id: currentTeamId.value,
+  };
   showTaskModal.value = true;
 }
 
@@ -445,22 +809,28 @@ function onAttachmentChanged({ taskId, attachments }) {
 
 async function onSaveTask(taskFormData) {
   try {
-    if (currentUser.value?.role !== 'admin' && selectedTask.value?.id) {
+    if (!isAdmin.value && selectedTask.value?.id) {
       // Regular user only changes status
       await api.updateTaskStatus(selectedTask.value.id, taskFormData.status);
       toastRef.value?.success('Đã cập nhật tiến độ công việc!');
     } else if (selectedTask.value?.id) {
-      await api.updateTask(selectedTask.value.id, taskFormData);
+      await api.updateTask(selectedTask.value.id, {
+        ...taskFormData,
+        team_id: taskFormData.team_id || currentTeamId.value,
+        workspace_id: taskFormData.workspace_id || currentWorkspaceId.value,
+      });
       toastRef.value?.success('Đã cập nhật công việc thành công!');
     } else {
       await api.createTask({
         ...taskFormData,
+        team_id: taskFormData.team_id || currentTeamId.value,
+        workspace_id: taskFormData.workspace_id || currentWorkspaceId.value,
         created_by: currentUser.value.email,
       });
       toastRef.value?.success('Đã thêm công việc mới thành công!');
     }
     showTaskModal.value = false;
-    await refreshData();
+    await refreshScopedData();
   } catch (err) {
     toastRef.value?.error(`Lỗi: ${typeof err === 'string' ? err : (err.message || 'Thất bại')}`);
   }
@@ -473,7 +843,7 @@ function confirmDeleteTask(task) {
     try {
       await api.deleteTask(task.id);
       toastRef.value?.success('Đã xóa công việc thành công!');
-      await refreshData();
+      await refreshScopedData();
     } catch (err) {
       toastRef.value?.error('Không thể xóa công việc!');
     }
@@ -482,26 +852,35 @@ function confirmDeleteTask(task) {
 }
 
 async function quickApproveTask(taskId) {
-  try {
-    await api.updateTaskStatus(taskId, 'DONE');
-    toastRef.value?.success('Đã phê duyệt hoàn thành công việc!');
-    await refreshData();
-  } catch (err) {
-    toastRef.value?.error('Lỗi khi phê duyệt công việc!');
-  }
+  await onStatusChange({ id: taskId, status: 'DONE' });
+  toastRef.value?.success('Đã phê duyệt hoàn thành công việc!');
 }
 
 async function onStatusChange({ id, status }) {
+  const task = tasks.value.find(t => t.id === id);
+  if (!task) return;
+  const oldStatus = task.status;
+  if (oldStatus === status) return;
+
+  // 1. Phản hồi giao diện tức thì (Optimistic 0ms UI update)
+  task.status = status;
+  updateLocalStats();
+
+  // 2. Đồng bộ ngầm lên MongoDB Atlas mà không gây đứng hình/giật lag
   try {
     await api.updateTaskStatus(id, status);
-    toastRef.value?.success('Đã cập nhật trạng thái tiến độ!');
-    await refreshData();
   } catch (err) {
-    toastRef.value?.error('Không thể cập nhật trạng thái!');
+    // Hoàn tác nếu có lỗi mạng
+    task.status = oldStatus;
+    updateLocalStats();
+    toastRef.value?.error('Lỗi mạng: Không thể cập nhật trạng thái trên máy chủ!');
   }
 }
 
-// User Handlers
+// ==========================================
+// USER HANDLERS
+// ==========================================
+
 function openNewUserModal() {
   selectedUser.value = null;
   showUserModal.value = true;
@@ -520,7 +899,8 @@ async function onSaveUser(userFormData) {
         userFormData.full_name,
         userFormData.role,
         userFormData.is_active,
-        userFormData.password
+        userFormData.password,
+        userFormData.team_id || null
       );
       toastRef.value?.success('Đã cập nhật thông tin cán bộ!');
     } else {
@@ -528,12 +908,13 @@ async function onSaveUser(userFormData) {
         userFormData.full_name,
         userFormData.email,
         userFormData.password,
-        userFormData.role
+        userFormData.role,
+        userFormData.team_id || currentTeamId.value || null
       );
       toastRef.value?.success('Đã thêm cán bộ mới thành công!');
     }
     showUserModal.value = false;
-    await refreshData();
+    await refreshScopedData();
   } catch (err) {
     toastRef.value?.error(`Lỗi: ${typeof err === 'string' ? err : (err.message || 'Thất bại')}`);
   }
@@ -541,12 +922,11 @@ async function onSaveUser(userFormData) {
 
 async function toggleUserStatus(user) {
   try {
-    const newStatus = !user.is_active;
-    await api.updateUser(user.email, null, null, newStatus, null);
-    toastRef.value?.success(newStatus ? 'Đã mở khóa tài khoản cán bộ!' : 'Đã khóa tài khoản cán bộ!');
-    await refreshData();
+    await api.updateUser(user.email, null, null, !user.is_active, null);
+    toastRef.value?.success(`Đã ${!user.is_active ? 'mở khóa' : 'khóa'} tài khoản ${user.full_name}!`);
+    await refreshScopedData();
   } catch (err) {
-    toastRef.value?.error('Lỗi khi cập nhật trạng thái cán bộ!');
+    toastRef.value?.error('Lỗi khi thay đổi trạng thái tài khoản!');
   }
 }
 
@@ -557,7 +937,7 @@ function confirmDeleteUser(user) {
     try {
       await api.deleteUser(user.email);
       toastRef.value?.success('Đã xóa cán bộ và gỡ khỏi tất cả công việc liên quan!');
-      await refreshData();
+      await refreshScopedData();
     } catch (err) {
       toastRef.value?.error('Lỗi khi xóa cán bộ!');
     }
@@ -570,6 +950,36 @@ function executeConfirmAction() {
     confirmDialog.action();
   }
   confirmDialog.show = false;
+}
+
+// Updater Check
+async function checkForAppUpdates(silent = true) {
+  try {
+    const update = await check();
+    if (update && update.available) {
+      updateAvailable.value = true;
+      updateInfo.value = markRaw(update);
+      console.log('New update available:', update.version);
+      if (!silent) {
+        showUpdateModal.value = true;
+      }
+    } else {
+      updateAvailable.value = false;
+      if (!silent) {
+        toastRef.value?.show('Bạn đang sử dụng phiên bản mới nhất!', 'success');
+      }
+    }
+  } catch (err) {
+    console.warn('Check update notice:', err);
+    if (!silent) {
+      toastRef.value?.show(`Lỗi kiểm tra cập nhật: ${err}`, 'error');
+    }
+  }
+}
+
+function onAppUpdated() {
+  updateAvailable.value = false;
+  showUpdateModal.value = false;
 }
 </script>
 
@@ -591,7 +1001,7 @@ function executeConfirmAction() {
   overflow: hidden;
 }
 
-/* ================= HEADER (Python Header Style) ================= */
+/* ================= HEADER ================= */
 .app-header {
   height: 58px;
   background-color: var(--bg-surface);
@@ -601,12 +1011,14 @@ function executeConfirmAction() {
   justify-content: space-between;
   padding: 0 18px;
   flex-shrink: 0;
+  gap: 12px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .header-icon {
@@ -614,43 +1026,112 @@ function executeConfirmAction() {
 }
 
 .header-title {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 800;
   color: var(--text-ink);
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Quick Selectors on Header */
+.header-select-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg-sub);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}
+
+.header-select-icon {
+  font-size: 13px;
+}
+
+.header-select {
+  border: none;
+  background: transparent;
+  color: var(--text-ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  max-width: 170px;
+}
+
+.header-select:focus {
+  outline: none;
+}
+
+.header-team-select {
+  color: #7e22ce;
+}
+[data-theme="dark"] .header-team-select {
+  color: #c084fc;
+}
+
+.header-ws-select {
+  color: var(--accent);
 }
 
 .user-greeting {
   font-size: 12.5px;
   color: var(--text-muted);
-  margin-right: 6px;
+  margin-right: 4px;
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .role-badge {
   font-size: 10.5px;
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
 }
+
+.badge-super_admin {
+  background-color: #f3e8ff;
+  color: #7e22ce;
+  border-color: #d8b4fe;
+}
+[data-theme="dark"] .badge-super_admin {
+  background-color: #3b0764;
+  color: #e9d5ff;
+  border-color: #9333ea;
+}
+
 .badge-admin {
   background-color: #fee2e2;
   color: #dc2626;
   border-color: #fca5a5;
 }
+[data-theme="dark"] .badge-admin {
+  background-color: #450a0a;
+  color: #f87171;
+  border-color: #991b1b;
+}
+
 .badge-user {
   background-color: #dbeafe;
   color: #2563eb;
   border-color: #93c5fd;
+}
+[data-theme="dark"] .badge-user {
+  background-color: #172554;
+  color: #60a5fa;
+  border-color: #1d4ed8;
 }
 
 .btn-header {
@@ -659,7 +1140,17 @@ function executeConfirmAction() {
   font-weight: 500;
 }
 
-/* ================= STAT METRIC BANNER (Python 6-Card Banner) ================= */
+.spin-icon {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ================= STAT METRIC BANNER ================= */
 .stat-banner {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
@@ -722,6 +1213,7 @@ function executeConfirmAction() {
   border-bottom: none;
   background: transparent;
   margin-bottom: -1px;
+  cursor: pointer;
 }
 .tab-btn:hover {
   background-color: var(--bg-hover);
@@ -747,9 +1239,7 @@ function executeConfirmAction() {
   border-radius: 0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
 }
 
-/* ==========================================
-   AUTO-UPDATER TITLE BUTTON & BANNER STYLES
-========================================== */
+/* ================= AUTO-UPDATER TITLE BUTTON & BANNER ================= */
 .btn-title-update {
   display: inline-flex;
   align-items: center;
@@ -834,5 +1324,57 @@ function executeConfirmAction() {
 .btn-banner-download:hover {
   filter: brightness(1.15);
   transform: translateY(-1px);
+}
+
+/* Modals */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999999;
+}
+
+.modal-dialog {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 90%;
+  max-width: 440px;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+}
+
+.modal-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--text-ink);
+}
+
+.modal-body {
+  padding: 16px;
+}
+
+.modal-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  background-color: var(--bg-sub);
 }
 </style>

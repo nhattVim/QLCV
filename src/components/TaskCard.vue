@@ -15,7 +15,7 @@
       </div>
 
       <!-- Admin Actions Only -->
-      <div v-if="currentUser.role === 'admin'" class="admin-actions">
+      <div v-if="canManage" class="admin-actions">
         <button class="btn-icon" title="Chỉnh sửa công việc" @click.stop="$emit('edit', task)">
           ✏️
         </button>
@@ -79,7 +79,7 @@
       <!-- Status: REVIEW (ADMIN HAS APPROVE, USER ONLY HAS RECALL) -->
       <template v-else-if="task.status === 'REVIEW'">
         <!-- Only Admin can approve -->
-        <template v-if="currentUser.role === 'admin'">
+        <template v-if="canManage">
           <button 
             class="btn-flow"
             title="Trả lại yêu cầu làm tiếp"
@@ -112,7 +112,7 @@
       <template v-else-if="task.status === 'DONE'">
         <span class="done-tag">✓ Hoàn thành</span>
         <button 
-          v-if="currentUser.role === 'admin'"
+          v-if="canManage"
           class="btn-flow"
           title="Mở lại công việc"
           @click.stop="moveStatus('IN_PROGRESS')"
@@ -143,6 +143,8 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['edit', 'delete', 'approve', 'status-change', 'view']);
+
+const canManage = computed(() => props.currentUser?.role === 'admin' || props.currentUser?.role === 'super_admin');
 
 const now = new Date();
 

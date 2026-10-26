@@ -75,11 +75,11 @@ function formatDescriptionForEmail(html) {
     return s;
 }
 
-exports = async function() {
+exports = async function () {
     // 1. Cấu hình dịch vụ gửi Email Brevo
-    const BREVO_API_KEY = "DIEN_BREVO_API_KEY_VAO_DAY"; 
-    const SENDER_EMAIL  = "tuankug@gmail.com"; // Email của bạn (đã đăng ký trên Brevo)
-    const SENDER_NAME   = "Hệ Thống Quản Lý Công Việc";
+    const BREVO_API_KEY = "DIEN_BREVO_API_KEY_VAO_DAY";
+    const SENDER_EMAIL = "tuankug@gmail.com"; // Email của bạn (đã đăng ký trên Brevo)
+    const SENDER_NAME = "Hệ Thống Quản Lý Công Việc";
 
     // 2. Kết nối tới CSDL MongoDB
     let mongodb = context.services.get("qlcv") || context.services.get("mongodb-atlas") || context.services.get("Cluster0");
@@ -90,6 +90,26 @@ exports = async function() {
 
     const db = mongodb.db("qlcv_db");
     const tasksCol = db.collection("tasks");
+    const teamsCol = db.collection("teams");
+    const workspacesCol = db.collection("workspaces");
+
+    // Lấy danh mục teams và workspaces để hiển thị thông tin rõ ràng
+    let teamMap = {};
+    let wsMap = {};
+    try {
+        const teamsList = await teamsCol.find({}).toArray();
+        for (const t of teamsList) {
+            if (t._id) teamMap[String(t._id)] = t.name;
+            if (t.id) teamMap[String(t.id)] = t.name;
+        }
+        const wsList = await workspacesCol.find({}).toArray();
+        for (const w of wsList) {
+            if (w._id) wsMap[String(w._id)] = w.name;
+            if (w.id) wsMap[String(w.id)] = w.name;
+        }
+    } catch (cacheErr) {
+        console.log("Không thể nạp danh mục team/workspace:", cacheErr.message);
+    }
 
     const now = new Date();
     const fallbackWindow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
@@ -147,9 +167,12 @@ exports = async function() {
         const isOverdue = dueDate < now;
         const remindDays = task.remind_before_days || 2;
 
-        const subject = isOverdue 
-            ? `[QLCV] Cập nhật tiến độ: Công việc '${task.title}' đã quá hạn hoàn thành`
-            : `[QLCV] Nhắc việc: Công việc '${task.title}' sắp đến hạn hoàn thành (${dueFormatted})`;
+        const teamName = (task.team_id && teamMap[String(task.team_id)]) || "";
+        const workspaceName = (task.workspace_id && wsMap[String(task.workspace_id)]) || "";
+
+        const subject = isOverdue
+            ? `Cập nhật tiến độ: Công việc '${task.title}' đã quá hạn hoàn thành`
+            : `Nhắc việc: Công việc '${task.title}' sắp đến hạn hoàn thành (${dueFormatted})`;
 
         const statusBanner = isOverdue
             ? `<div style="background-color: #FEF2F2; border-left: 4px solid #EF4444; color: #991B1B; padding: 12px 16px; border-radius: 4px; font-weight: 500; margin-bottom: 20px;">
@@ -177,7 +200,7 @@ exports = async function() {
                 .desc-box { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px 16px; margin: 0 0 16px 0; font-size: 14px; color: #1E293B; }
                 .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
                 .info-table td { padding: 8px 0; font-size: 14px; vertical-align: top; }
-                .info-label { width: 140px; color: #64748B; font-weight: 600; }
+                .info-label { width: 160px; color: #64748B; font-weight: 600; }
                 .info-val { color: #1E293B; }
                 .app-box { background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #475569; }
                 .footer { background: #F8FAFC; padding: 16px 24px; text-align: center; font-size: 12px; color: #94A3B8; border-top: 1px solid #E5E7EB; }
@@ -194,6 +217,16 @@ exports = async function() {
                         <div class="task-title">${escapeHtml(task.title || "")}</div>
                         <div class="desc-box">${formatDescriptionForEmail(task.description)}</div>
                         <table class="info-table">
+                            ${teamName ? `
+                            <tr>
+                                <td class="info-label">Đội nhóm (Team):</td>
+                                <td class="info-val"><b>${escapeHtml(teamName)}</b></td>
+                            </tr>` : ""}
+                            ${workspaceName ? `
+                            <tr>
+                                <td class="info-label">Không gian làm việc:</td>
+                                <td class="info-val"><b>${escapeHtml(workspaceName)}</b></td>
+                            </tr>` : ""}
                             <tr>
                                 <td class="info-label">Mức độ ưu tiên:</td>
                                 <td class="info-val"><b>${escapeHtml(task.priority || "Trung bình")}</b></td>
@@ -221,9 +254,11 @@ exports = async function() {
         </html>
         `;
 
-        const textBody = 
+        const textBody =
             `THÔNG BÁO TIẾN ĐỘ CÔNG VIỆC\n\n` +
             `Tiêu đề: ${task.title}\n` +
+            (teamName ? `Đội nhóm: ${teamName}\n` : "") +
+            (workspaceName ? `Không gian làm việc: ${workspaceName}\n` : "") +
             `Hạn hoàn thành: ${dueFormatted}\n` +
             `Trạng thái: ${isOverdue ? "Đã quá hạn hoàn thành" : `Sắp đến hạn (nhắc trước ${remindDays} ngày)`}\n` +
             `Mô tả: ${htmlToPlainText(task.description) || "Không có mô tả chi tiết."}\n` +

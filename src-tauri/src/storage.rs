@@ -120,6 +120,9 @@ fn get_bucket_client() -> Result<(Box<Bucket>, StorageConfig), String> {
 }
 
 pub async fn upload_attachment(
+    team_id: &str,
+    workspace_id: &str,
+    ticket_id: &str,
     file_name: &str,
     data: &[u8],
     content_type: &str,
@@ -133,7 +136,11 @@ pub async fn upload_attachment(
         .and_then(|s| s.to_str())
         .unwrap_or("document");
 
-    let object_key = format!("attachments/{}/{}", att_id, safe_file_name);
+    let clean_team = if team_id.trim().is_empty() { "default_team" } else { team_id.trim() };
+    let clean_workspace = if workspace_id.trim().is_empty() { "default_workspace" } else { workspace_id.trim() };
+    let clean_ticket = if ticket_id.trim().is_empty() { "draft" } else { ticket_id.trim() };
+
+    let object_key = format!("{}/{}/{}/{}_{}", clean_team, clean_workspace, clean_ticket, att_id, safe_file_name);
 
     let mime = if content_type.is_empty() {
         "application/octet-stream"

@@ -1,11 +1,9 @@
 <template>
   <div 
     class="task-card" 
-    :class="[cardClass, { 'is-dragging': isDragging }]" 
-    draggable="true"
-    @dragstart="onDragStart"
-    @dragend="onDragEnd"
-    @click="onClickCard"
+    :class="cardClass" 
+    :data-task-id="task.id"
+    @click="$emit('view', task)"
   >
     <!-- Top Row: Priority Badge & ID & Admin Tools -->
     <div class="card-header">
@@ -127,7 +125,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 
 const props = defineProps({
   task: {
@@ -235,28 +233,6 @@ const shortId = computed(() => {
   return props.task.id.slice(-4);
 });
 
-const isDragging = ref(false);
-let isDragAction = false;
-
-function onDragStart(event) {
-  isDragging.value = true;
-  isDragAction = true;
-  event.dataTransfer.effectAllowed = 'move';
-  event.dataTransfer.setData('text/plain', props.task.id);
-}
-
-function onDragEnd() {
-  isDragging.value = false;
-  setTimeout(() => {
-    isDragAction = false;
-  }, 120);
-}
-
-function onClickCard() {
-  if (isDragAction) return;
-  emit('view', props.task);
-}
-
 function moveStatus(newStatus) {
   emit('status-change', { id: props.task.id, status: newStatus });
 }
@@ -274,6 +250,8 @@ function moveStatus(newStatus) {
   border-left-width: 3.5px;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
   transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, border-color 0.12s ease;
 }
 
@@ -281,12 +259,6 @@ function moveStatus(newStatus) {
   cursor: grabbing;
 }
 
-.task-card.is-dragging {
-  opacity: 0.4;
-  transform: scale(0.97);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
-  border: 1px dashed var(--primary, #2563eb);
-}
 
 .task-card:hover {
   border-color: var(--accent);

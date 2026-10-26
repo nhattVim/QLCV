@@ -99,11 +99,7 @@
         v-for="col in kanbanColumns" 
         :key="col.key" 
         class="kanban-col"
-        :class="[`col-${col.key.toLowerCase()}`, { 'drag-target-active': activeDragCol === col.key }]"
-        @dragover.prevent="onDragOver($event, col.key)"
-        @dragenter.prevent="onDragEnter($event, col.key)"
-        @dragleave="onDragLeave($event, col.key)"
-        @drop="onDrop($event, col.key)"
+        :class="`col-${col.key.toLowerCase()}`"
       >
         <!-- Column Header (Clean: Title, Icon, Count Badge Only) -->
         <div class="kanban-col-header">
@@ -115,7 +111,10 @@
         </div>
 
         <!-- Vertical Stack of Compact Task Cards -->
-        <div class="kanban-col-body">
+        <div 
+          class="kanban-col-body"
+          :data-status="col.key"
+        >
           <TaskCard 
             v-for="task in getColumnTasks(col.key)" 
             :key="task.id" 
@@ -226,7 +225,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import Sortable from 'sortablejs';
 import TaskCard from '../components/TaskCard.vue';
 
 const props = defineProps({
@@ -263,57 +263,74 @@ const kanbanColumns = [
   { key: 'DONE', label: 'Hoàn thành', icon: '✅' },
 ];
 
-// Drag & Drop State
-const activeDragCol = ref(null);
-let dragEnterCounter = {};
+// SortableJS Drag & Drop Management
+let sortableInstances = [];
 
-function onDragEnter(event, colKey) {
-  event.dataTransfer.dropEffect = 'move';
-  dragEnterCounter[colKey] = (dragEnterCounter[colKey] || 0) + 1;
-  activeDragCol.value = colKey;
+function initSortables() {
+  sortableInstances.forEach(inst => {
+    try { inst.destroy(); } catch {}
+  });
+  sortableInstances = [];
+
+  if (viewMode.value !== 'kanban') return;
+
+  const colBodies = document.querySelectorAll('.kanban-col-body');
+  colBodies.forEach(el => {
+    const sortable = new Sortable(el, {
+      group: 'kanban-board',
+      animation: 200,
+      forceFallback: true,
+      fallbackClass: 'kanban-sortable-fallback',
+      fallbackOnBody: true,
+      fallbackTolerance: 3,
+      ghostClass: 'kanban-sortable-ghost',
+      chosenClass: 'kanban-sortable-chosen',
+      dragClass: 'kanban-sortable-drag',
+      draggable: '.task-card',
+      filter: '.admin-actions, .card-workflow, button, a',
+      preventOnFilter: false,
+      swapThreshold: 0.65,
+      onEnd(evt) {
+        const taskId = evt.item?.getAttribute('data-task-id');
+        const fromStatus = evt.from?.getAttribute('data-status');
+        const toStatus = evt.to?.getAttribute('data-status');
+
+        if (!taskId) return;
+
+        // Kéo thả sang cột khác -> đổi trạng thái
+        if (fromStatus !== toStatus && toStatus) {
+          if (toStatus === 'DONE') {
+            if (props.currentUser?.role === 'admin') {
+              emit('approve-task', taskId);
+            } else {
+              // Cán bộ thường không được tự duyệt Hoàn thành, đưa vào REVIEW
+              emit('status-change', { id: taskId, status: 'REVIEW' });
+            }
+          } else {
+            // Các trạng thái khác: TODO, IN_PROGRESS, REVIEW
+            emit('status-change', { id: taskId, status: toStatus });
+          }
+        }
+      }
+    });
+    sortableInstances.push(sortable);
+  });
 }
 
-function onDragOver(event, colKey) {
-  event.dataTransfer.dropEffect = 'move';
-  if (activeDragCol.value !== colKey) {
-    activeDragCol.value = colKey;
-  }
-}
+onMounted(() => {
+  nextTick(initSortables);
+});
 
-function onDragLeave(event, colKey) {
-  dragEnterCounter[colKey] = (dragEnterCounter[colKey] || 0) - 1;
-  if (dragEnterCounter[colKey] <= 0) {
-    dragEnterCounter[colKey] = 0;
-    if (activeDragCol.value === colKey) {
-      activeDragCol.value = null;
-    }
-  }
-}
+onUnmounted(() => {
+  sortableInstances.forEach(inst => {
+    try { inst.destroy(); } catch {}
+  });
+  sortableInstances = [];
+});
 
-function onDrop(event, targetStatus) {
-  activeDragCol.value = null;
-  dragEnterCounter = {};
-
-  const taskId = event.dataTransfer.getData('text/plain');
-  if (!taskId) return;
-
-  const task = props.tasks.find(t => t.id === taskId);
-  if (!task || task.status === targetStatus) return;
-
-  // Xử lý chuyển vào cột Hoàn thành (DONE)
-  if (targetStatus === 'DONE') {
-    if (props.currentUser?.role === 'admin') {
-      emit('approve-task', taskId);
-    } else {
-      // Cán bộ thường không có quyền tự duyệt Hoàn thành, chuyển về Chờ duyệt (REVIEW)
-      emit('status-change', { id: taskId, status: 'REVIEW' });
-    }
-    return;
-  }
-
-  // Các trạng thái khác: TODO, IN_PROGRESS, REVIEW
-  emit('status-change', { id: taskId, status: targetStatus });
-}
+watch([() => props.tasks, viewMode, filterStatus, filterPriority, filterUser, searchKeyword], () => {
+  nextTick(initSortables);
+}, { deep: true });
 
 const isFiltered = computed(() => {
   return filterStatus.value !== 'ALL' || 
@@ -576,19 +593,6 @@ function isOverdue(task) {
   transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.kanban-col.drag-target-active {
-  background-color: rgba(37, 99, 235, 0.08) !important;
-  border-color: #2563eb !important;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35), 0 8px 24px rgba(37, 99, 235, 0.12);
-}
-
-.kanban-col.drag-target-active .kanban-col-header {
-  background-color: rgba(37, 99, 235, 0.15);
-}
-
-.kanban-col.drag-target-active .kanban-col-body {
-  background-color: rgba(37, 99, 235, 0.03);
-}
 
 .col-todo {
   border-top-color: var(--todo);
@@ -645,6 +649,7 @@ function isOverdue(task) {
   gap: 8px;
   overflow-y: auto;
   flex: 1;
+  min-height: 250px;
   max-height: calc(100vh - 310px);
 }
 
@@ -656,6 +661,7 @@ function isOverdue(task) {
   color: var(--text-sub);
   font-size: 12px;
   margin-top: 4px;
+  pointer-events: none;
 }
 
 /* ================= TABLE VIEW ================= */

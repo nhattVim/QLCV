@@ -3,6 +3,17 @@
     <!-- Toast Notifications -->
     <Toast ref="toastRef" />
 
+    <!-- Global Top Update Banner (Shown on Login Screen if update available) -->
+    <div v-if="updateAvailable && !currentUser" class="global-update-banner">
+      <div class="banner-content">
+        <span class="banner-icon">🚀</span>
+        <span>Đã có phiên bản mới: <strong>QLCV v{{ updateInfo?.version }}</strong></span>
+      </div>
+      <button class="btn-banner-download" @click="showUpdateModal = true">
+        ⬇️ Tải xuống bản cập nhật
+      </button>
+    </div>
+
     <!-- 1. Login View (If not logged in) -->
     <LoginView 
       v-if="!currentUser" 
@@ -23,6 +34,19 @@
         </div>
 
         <div class="header-right">
+          <!-- Top Title Bar Update Download Button -->
+          <button 
+            v-if="updateAvailable" 
+            type="button"
+            class="btn-title-update pulse-anim" 
+            title="Đã có phiên bản mới! Bấm để tải xuống và cập nhật ngay"
+            @click="showUpdateModal = true"
+          >
+            <span class="update-icon">⚡</span>
+            <span class="update-text">Có bản mới: <strong>v{{ updateInfo?.version }}</strong></span>
+            <span class="update-badge">Tải ngay ⬇️</span>
+          </button>
+
           <div class="user-greeting">
             Xin chào, <strong>{{ currentUser.full_name }}</strong> ({{ currentUser.email }})
             <span class="role-badge" :class="currentUser.role === 'admin' ? 'badge-admin' : 'badge-user'">
@@ -178,16 +202,26 @@
         </div>
       </div>
     </div>
+    <!-- Update Modal -->
+    <UpdateModal 
+      :show="showUpdateModal"
+      :update="updateInfo"
+      :current-app-version="currentAppVersion"
+      @close="showUpdateModal = false"
+      @updated="onAppUpdated"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { check } from '@tauri-apps/plugin-updater';
 import { api } from './api.js';
 
 import Toast from './components/Toast.vue';
 import TaskModal from './components/TaskModal.vue';
 import UserModal from './components/UserModal.vue';
+import UpdateModal from './components/UpdateModal.vue';
 
 import LoginView from './views/LoginView.vue';
 import TasksView from './views/TasksView.vue';
@@ -225,6 +259,42 @@ const confirmDialog = reactive({
   action: null,
 });
 
+// Auto-Updater State
+const updateAvailable = ref(false);
+const updateInfo = ref(null);
+const showUpdateModal = ref(false);
+const currentAppVersion = ref('1.0.0');
+let updateCheckTimer = null;
+
+async function checkForAppUpdates(silent = true) {
+  try {
+    const update = await check();
+    if (update && update.available) {
+      updateAvailable.value = true;
+      updateInfo.value = update;
+      console.log('New update available:', update.version);
+      if (!silent) {
+        showUpdateModal.value = true;
+      }
+    } else {
+      updateAvailable.value = false;
+      if (!silent) {
+        toastRef.value?.show('Bạn đang sử dụng phiên bản mới nhất!', 'success');
+      }
+    }
+  } catch (err) {
+    console.warn('Check update notice:', err);
+    if (!silent) {
+      toastRef.value?.show(`Lỗi kiểm tra cập nhật: ${err}`, 'error');
+    }
+  }
+}
+
+function onAppUpdated() {
+  updateAvailable.value = false;
+  showUpdateModal.value = false;
+}
+
 // Map of email -> Full Name
 const userMap = computed(() => {
   const map = {};
@@ -260,10 +330,19 @@ onMounted(async () => {
 
   // Keyboard shortcut listeners
   window.addEventListener('keydown', onKeyDown);
+
+  // Auto check for updates on startup & every 30 mins
+  checkForAppUpdates(true);
+  updateCheckTimer = setInterval(() => {
+    checkForAppUpdates(true);
+  }, 30 * 60 * 1000);
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer);
+  }
 });
 
 function onKeyDown(e) {
@@ -665,5 +744,94 @@ function executeConfirmAction() {
   background-color: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
+}
+
+/* ==========================================
+   AUTO-UPDATER TITLE BUTTON & BANNER STYLES
+========================================== */
+.btn-title-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(135deg, #2563eb, #6366f1);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+  margin-right: 6px;
+}
+
+.btn-title-update:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.55);
+  filter: brightness(1.1);
+}
+
+.update-icon {
+  font-size: 13px;
+}
+
+.update-badge {
+  background-color: rgba(255, 255, 255, 0.25);
+  padding: 2px 7px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@keyframes updatePulseGlow {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
+.pulse-anim {
+  animation: updatePulseGlow 2.2s infinite;
+}
+
+.global-update-banner {
+  background: linear-gradient(90deg, #0f172a, #1e293b);
+  color: #ffffff;
+  border-bottom: 2px solid #2563eb;
+  padding: 9px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  position: relative;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.banner-icon {
+  font-size: 16px;
+}
+
+.btn-banner-download {
+  background: linear-gradient(135deg, #2563eb, #6366f1);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-banner-download:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
 }
 </style>

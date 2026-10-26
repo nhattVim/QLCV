@@ -1,0 +1,67 @@
+name: Release QLCV App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and Release Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_PUBLIC_DOMAIN: ${{ secrets.S3_PUBLIC_DOMAIN }}
+        with:
+          tagName: __VERSION__
+          releaseName: 'QLCV v__VERSION__'
+          releaseBody: |
+            ## 🚀 Phiên bản mới QLCV v__VERSION__
+            
+            - Tự động phát hành từ GitHub Actions.
+            - Hỗ trợ tự động cập nhật qua hệ thống Auto-Update của ứng dụng.
+            
+            ### Tệp tải về:
+            - **Bản cài đặt mới**: Tải file `.exe` bên dưới để cài đặt trên máy mới.
+            - **Máy đã cài đặt**: Ứng dụng sẽ tự động hiện thông báo cập nhật khi mở app!
+          releaseDraft: false
+          prerelease: false

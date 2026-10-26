@@ -216,6 +216,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(db_state)
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             get_connection_status,
             reconnect_mongo,

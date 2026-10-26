@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,5 +36,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBODE3ODQ3MjY1Q0IwMjEKUldRaHNGd21SM2lCeWl1ZmJCM0MvQkRGcnUzN25rRXRTL3RZRmloUFBIVzVBRkpXTHNIeFhYeDkK",
+      "endpoints": [
+        "https://github.com/nhattVim/QLCV/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

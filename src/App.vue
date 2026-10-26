@@ -265,7 +265,6 @@ const updateAvailable = ref(false);
 const updateInfo = shallowRef(null);
 const showUpdateModal = ref(false);
 const currentAppVersion = ref('1.0.0');
-let updateCheckTimer = null;
 
 async function checkForAppUpdates(silent = true) {
   try {
@@ -339,18 +338,12 @@ onMounted(async () => {
     console.warn('Could not get app version:', e);
   }
 
-  // Auto check for updates on startup & every 30 mins
+  // Auto check for updates once on startup
   checkForAppUpdates(true);
-  updateCheckTimer = setInterval(() => {
-    checkForAppUpdates(true);
-  }, 30 * 60 * 1000);
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
-  if (updateCheckTimer) {
-    clearInterval(updateCheckTimer);
-  }
 });
 
 function onKeyDown(e) {

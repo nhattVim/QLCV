@@ -95,57 +95,92 @@ goto MENU
 
 :DELETE_RELEASE
 cls
-set "DEL_VER="
-set "CONFIRM_DEL="
 echo =====================================================================
 echo                 [2] XOA BAN PHAT HANH / GIT TAG
 echo =====================================================================
 echo.
-echo Nhap so phien ban / tag muon xoa (Vi du: 1.0.1 hoac v1.0.1):
-set /p DEL_VER="> Version / Tag: "
+echo Dang kiem tra va dong bo Git Tag tu GitHub...
+git fetch --tags --prune-tags origin >nul 2>&1
 
-if "%DEL_VER%"=="" (
-    echo [Loi] Ban chua nhap tag can xoa.
+set "TAG_COUNT=0"
+for /f "tokens=*" %%T in ('git tag -l') do (
+    set /a TAG_COUNT+=1
+    set "TAG[!TAG_COUNT!]=%%T"
+)
+
+if %TAG_COUNT% equ 0 (
+    echo.
+    echo [Thong bao] Khong tim thay Git Tag nao tren may va GitHub!
+    echo.
     pause
     goto MENU
 )
 
-set "CLEAN_DEL=%DEL_VER%"
-if "%CLEAN_DEL:~0,1%"=="v" set "CLEAN_DEL=%CLEAN_DEL:~1%"
-if "%CLEAN_DEL:~0,1%"=="V" set "CLEAN_DEL=%CLEAN_DEL:~1%"
-set "DEL_TAG=v%CLEAN_DEL%"
-
 echo.
-echo CANH BAO: Thao tac nay se xoa tag %DEL_TAG% o ca may nay va tren GitHub!
-set /p CONFIRM_DEL="Ban co chac chan 100%% muon xoa %DEL_TAG%? (y/n): "
-if /i not "%CONFIRM_DEL%"=="y" goto MENU
-
+echo Danh sach Git Tag hien co:
+echo ---------------------------------------------------------------------
+for /l %%I in (1,1,%TAG_COUNT%) do (
+    echo   [%%I] !TAG[%%I]!
+)
+echo ---------------------------------------------------------------------
+echo   [0]   Quay lai Menu chinh
+echo   [ALL] Xoa tat ca cac tag tren
+echo =====================================================================
 echo.
-echo [1/3] Dang xoa local tag (%DEL_TAG% va %CLEAN_DEL%)...
-git tag -d %DEL_TAG% >nul 2>&1
-git tag -d %CLEAN_DEL% >nul 2>&1
+set "SEL="
+set /p SEL="Nhap cac so thu tu muon xoa (vi du: 1 3 hoac 1,2 hoac ALL): "
 
-echo [2/3] Dang xoa remote tag tren GitHub...
-git push origin --delete %DEL_TAG% >nul 2>&1
-git push origin --delete %CLEAN_DEL% >nul 2>&1
+if "!SEL!"=="" goto MENU
+if "!SEL!"=="0" goto MENU
 
-echo [3/3] Dang kiem tra xoa GitHub Release...
-where gh >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    gh release delete %DEL_TAG% --yes --cleanup-tag >nul 2>&1
-    gh release delete %CLEAN_DEL% --yes --cleanup-tag >nul 2>&1
-    echo [OK] Da xoa ban Release tren GitHub thong qua GitHub CLI.
+set "SELECTED_TAGS="
+if /i "!SEL!"=="all" (
+    for /l %%I in (1,1,%TAG_COUNT%) do (
+        set "SELECTED_TAGS=!SELECTED_TAGS! !TAG[%%I]!"
+    )
 ) else (
+    set "NORMALIZED_SEL=!SEL:,= !"
+    for %%N in (!NORMALIZED_SEL!) do (
+        if defined TAG[%%N] (
+            set "SELECTED_TAGS=!SELECTED_TAGS! !TAG[%%N]!"
+        )
+    )
+)
+
+if "!SELECTED_TAGS!"=="" (
     echo.
-    echo [Luu y] De xoa han ban Release tren web GitHub (neu chua xoa):
-    echo   Link 1: https://github.com/nhattVim/QLCV/releases/tag/%DEL_TAG%
-    echo   Link 2: https://github.com/nhattVim/QLCV/releases/tag/%CLEAN_DEL%
-    echo Bam vao nut 'Delete release' de xoa.
+    echo [Loi] Khong co lua chon hop le nao!
+    echo.
+    pause
+    goto MENU
+)
+
+echo.
+echo CANH BAO: Cac Git Tag sau day se bi xoa vinh vien:
+for %%T in (!SELECTED_TAGS!) do (
+    echo   - %%T
+)
+echo.
+set "CONFIRM_DEL="
+set /p CONFIRM_DEL="Ban co chac chan 100%% muon xoa cac tag tren? (y/n): "
+if /i not "!CONFIRM_DEL!"=="y" goto MENU
+
+echo.
+echo Dang tien hanh xoa...
+for %%T in (!SELECTED_TAGS!) do (
+    echo.
+    echo >> Dang xoa tag: %%T
+    git tag -d %%T >nul 2>&1
+    git push origin --delete %%T
+    where gh >nul 2>&1
+    if !ERRORLEVEL! equ 0 (
+        gh release delete %%T --yes --cleanup-tag >nul 2>&1
+    )
 )
 
 echo.
 echo =====================================================================
-echo                    DA XOA HOAN TAT TAG %DEL_TAG%!
+echo                 DA XOA HOAN TAT CAC TAG DA CHON!
 echo =====================================================================
 echo.
 pause

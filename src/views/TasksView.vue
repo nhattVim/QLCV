@@ -93,13 +93,17 @@
       </button>
     </div>
 
-    <!-- KANBAN BOARD (Vertical Columns like Jira / Trello - NO '+' BUTTON ON COLUMNS) -->
+    <!-- KANBAN BOARD (Vertical Columns like Jira / Trello - Hỗ trợ kéo thả thẻ) -->
     <div v-if="viewMode === 'kanban'" class="kanban-board">
       <div 
         v-for="col in kanbanColumns" 
         :key="col.key" 
         class="kanban-col"
-        :class="`col-${col.key.toLowerCase()}`"
+        :class="[`col-${col.key.toLowerCase()}`, { 'drag-target-active': activeDragCol === col.key }]"
+        @dragover.prevent="onDragOver($event, col.key)"
+        @dragenter.prevent="onDragEnter($event, col.key)"
+        @dragleave="onDragLeave($event, col.key)"
+        @drop="onDrop($event, col.key)"
       >
         <!-- Column Header (Clean: Title, Icon, Count Badge Only) -->
         <div class="kanban-col-header">
@@ -244,7 +248,7 @@ const props = defineProps({
   },
 });
 
-defineEmits(['add-task', 'view-task', 'edit-task', 'delete-task', 'approve-task', 'status-change']);
+const emit = defineEmits(['add-task', 'view-task', 'edit-task', 'delete-task', 'approve-task', 'status-change']);
 
 const filterStatus = ref('ALL');
 const filterPriority = ref('ALL');
@@ -258,6 +262,58 @@ const kanbanColumns = [
   { key: 'REVIEW', label: 'Chờ duyệt', icon: '🔍' },
   { key: 'DONE', label: 'Hoàn thành', icon: '✅' },
 ];
+
+// Drag & Drop State
+const activeDragCol = ref(null);
+let dragEnterCounter = {};
+
+function onDragEnter(event, colKey) {
+  event.dataTransfer.dropEffect = 'move';
+  dragEnterCounter[colKey] = (dragEnterCounter[colKey] || 0) + 1;
+  activeDragCol.value = colKey;
+}
+
+function onDragOver(event, colKey) {
+  event.dataTransfer.dropEffect = 'move';
+  if (activeDragCol.value !== colKey) {
+    activeDragCol.value = colKey;
+  }
+}
+
+function onDragLeave(event, colKey) {
+  dragEnterCounter[colKey] = (dragEnterCounter[colKey] || 0) - 1;
+  if (dragEnterCounter[colKey] <= 0) {
+    dragEnterCounter[colKey] = 0;
+    if (activeDragCol.value === colKey) {
+      activeDragCol.value = null;
+    }
+  }
+}
+
+function onDrop(event, targetStatus) {
+  activeDragCol.value = null;
+  dragEnterCounter = {};
+
+  const taskId = event.dataTransfer.getData('text/plain');
+  if (!taskId) return;
+
+  const task = props.tasks.find(t => t.id === taskId);
+  if (!task || task.status === targetStatus) return;
+
+  // Xử lý chuyển vào cột Hoàn thành (DONE)
+  if (targetStatus === 'DONE') {
+    if (props.currentUser?.role === 'admin') {
+      emit('approve-task', taskId);
+    } else {
+      // Cán bộ thường không có quyền tự duyệt Hoàn thành, chuyển về Chờ duyệt (REVIEW)
+      emit('status-change', { id: taskId, status: 'REVIEW' });
+    }
+    return;
+  }
+
+  // Các trạng thái khác: TODO, IN_PROGRESS, REVIEW
+  emit('status-change', { id: taskId, status: targetStatus });
+}
 
 const isFiltered = computed(() => {
   return filterStatus.value !== 'ALL' || 
@@ -517,6 +573,21 @@ function isOverdue(task) {
   flex-direction: column;
   overflow: hidden;
   border-top-width: 3px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kanban-col.drag-target-active {
+  background-color: rgba(37, 99, 235, 0.08) !important;
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35), 0 8px 24px rgba(37, 99, 235, 0.12);
+}
+
+.kanban-col.drag-target-active .kanban-col-header {
+  background-color: rgba(37, 99, 235, 0.15);
+}
+
+.kanban-col.drag-target-active .kanban-col-body {
+  background-color: rgba(37, 99, 235, 0.03);
 }
 
 .col-todo {

@@ -13,7 +13,7 @@
         <button v-if="!downloading" class="btn-close" @click="onClose">✕</button>
       </div>
 
-      <!-- Body / Changelog -->
+      <!-- Body -->
       <div class="update-body">
         <div class="version-compare">
           <div class="ver-box current">
@@ -25,14 +25,6 @@
             <span class="ver-label">Phiên bản mới nhất</span>
             <span class="ver-num">v{{ update?.version }}</span>
           </div>
-        </div>
-
-        <div v-if="update?.body" class="changelog-box">
-          <div class="changelog-title">📋 Ghi chú bản phát hành:</div>
-          <div class="changelog-content">{{ update.body }}</div>
-        </div>
-        <div v-else class="changelog-box changelog-empty">
-          Phiên bản này bao gồm các cải tiến hiệu năng, tính năng mới và các bản sửa lỗi quan trọng.
         </div>
 
         <!-- Download Progress -->
@@ -88,7 +80,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, toRaw } from 'vue';
 import { relaunch } from '@tauri-apps/plugin-process';
 
 const props = defineProps({
@@ -120,7 +112,8 @@ function onClose() {
 }
 
 async function startDownloadAndInstall() {
-  if (!props.update) return;
+  const targetUpdate = toRaw(props.update);
+  if (!targetUpdate) return;
 
   downloading.value = true;
   error.value = '';
@@ -131,7 +124,7 @@ async function startDownloadAndInstall() {
     let downloadedBytes = 0;
     let totalBytes = 0;
 
-    await props.update.downloadAndInstall((event) => {
+    await targetUpdate.downloadAndInstall((event) => {
       switch (event.event) {
         case 'Started':
           totalBytes = event.data.contentLength || 0;
@@ -316,35 +309,6 @@ async function relaunchApp() {
   font-size: 16px;
 }
 
-.changelog-box {
-  background-color: var(--bg-surface, #ffffff);
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--radius-md, 8px);
-  padding: 12px 14px;
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.changelog-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-sub, #475569);
-  margin-bottom: 6px;
-}
-
-.changelog-content {
-  font-size: 12.5px;
-  color: var(--text-ink, #1e293b);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.changelog-empty {
-  font-size: 12.5px;
-  color: var(--text-muted, #64748b);
-  font-style: italic;
-}
 
 .progress-section {
   display: flex;

@@ -214,7 +214,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, shallowRef, markRaw } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
 import { check } from '@tauri-apps/plugin-updater';
 import { api } from './api.js';
@@ -262,7 +262,7 @@ const confirmDialog = reactive({
 
 // Auto-Updater State
 const updateAvailable = ref(false);
-const updateInfo = ref(null);
+const updateInfo = shallowRef(null);
 const showUpdateModal = ref(false);
 const currentAppVersion = ref('1.0.0');
 let updateCheckTimer = null;
@@ -272,7 +272,7 @@ async function checkForAppUpdates(silent = true) {
     const update = await check();
     if (update && update.available) {
       updateAvailable.value = true;
-      updateInfo.value = update;
+      updateInfo.value = markRaw(update);
       console.log('New update available:', update.version);
       if (!silent) {
         showUpdateModal.value = true;

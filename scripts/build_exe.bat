@@ -46,7 +46,7 @@ rem 5. Build Tauri
 echo.
 echo [INFO] Dang build Tauri Release...
 
-call npm run tauri build
+call npm run tauri build -- --no-sign
 if errorlevel 1 (
     echo [LOI] Build Tauri that bai.
     pause

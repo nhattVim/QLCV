@@ -60,8 +60,7 @@
             title="Đã có phiên bản mới! Bấm để tải xuống và cập nhật ngay"
             @click="showUpdateModal = true"
           >
-            <span class="update-icon">⚡</span>
-            <span class="update-text">Có bản mới: <strong>v{{ updateInfo?.version }}</strong></span>
+            <span class="update-text"><strong>v{{ updateInfo?.version }}</strong></span>
             <span class="update-badge">Tải ngay ⬇️</span>
           </button>
 

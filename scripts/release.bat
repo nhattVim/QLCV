@@ -30,7 +30,30 @@ echo =====================================================================
 echo                    [1] PHAT HANH PHIEN BAN MOI
 echo =====================================================================
 echo.
-echo Nhap so phien ban muon phat hanh (Vi du: 1.0.1 hoac v1.0.1):
+echo Dang kiem tra va dong bo Git Tag tu GitHub...
+git fetch --tags --prune-tags origin >nul 2>&1
+
+set "TAG_COUNT=0"
+for /f "tokens=*" %%T in ('git tag -l') do (
+    set /a TAG_COUNT+=1
+    set "TAG_!TAG_COUNT!=%%T"
+)
+
+if !TAG_COUNT! equ 0 (
+    echo.
+    echo [Thong bao] Khong tim thay Git Tag nao tren may va GitHub!
+    goto PROMPT_VERSION
+)
+
+echo.
+echo Danh sach Git Tag hien co:
+echo ---------------------------------------------------------------------
+call :PRINT_TAGS !TAG_COUNT!
+echo ---------------------------------------------------------------------
+
+:PROMPT_VERSION
+echo.
+echo Nhap so phien ban muon phat hanh [Vi du: 1.0.1 hoac v1.0.1, nhap 0 de quay lai]:
 set /p INPUT_VER="> Version: "
 
 if "%INPUT_VER%"=="" (
@@ -38,6 +61,7 @@ if "%INPUT_VER%"=="" (
     pause
     goto MENU
 )
+if "%INPUT_VER%"=="0" goto MENU
 
 set "CLEAN_VER=%INPUT_VER%"
 if "%CLEAN_VER:~0,1%"=="v" set "CLEAN_VER=%CLEAN_VER:~1%"

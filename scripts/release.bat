@@ -226,7 +226,7 @@ if errorlevel 1 goto PAUSE_MENU
 
 where gh >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Chua cai GitHub CLI (gh).
+    echo [ERROR] Chua cai GitHub CLI [gh].
     echo Can cai dat: https://cli.github.com/
     echo Sau do dang nhap bang lenh: gh auth login
     goto PAUSE_MENU
@@ -274,6 +274,11 @@ if /i "!SEL!"=="ALL" (
     call :SELECT_ALL_TAGS !TAG_COUNT!
 ) else (
     set "NORMALIZED_SEL=!SEL:,= !"
+    set "TEST_EMPTY=!NORMALIZED_SEL: =!"
+    if not defined TEST_EMPTY (
+        echo [ERROR] Khong co lua chon hop le.
+        goto PAUSE_MENU
+    )
     for %%N in (!NORMALIZED_SEL!) do call :ADD_SELECTED %%N
 )
 

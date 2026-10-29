@@ -162,7 +162,7 @@
             :class="{ active: currentTab === 'users' }"
             @click="currentTab = 'users'"
           >
-            👥 Danh bạ Cán bộ ({{ users.length }})
+            👥 Danh bạ Cán bộ ({{ staffUsers.length }})
           </button>
 
           <!-- 5. Reports Tab (Admin & Super Admin) -->
@@ -365,6 +365,9 @@ const currentAppVersion = ref('1.0.0');
 // Computeds
 const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin');
 const isAdmin = computed(() => currentUser.value?.role === 'admin' || isSuperAdmin.value);
+const staffUsers = computed(() =>
+  (users.value || []).filter((u) => u.role !== 'super_admin')
+);
 
 const currentTeam = computed(() => {
   return teams.value.find(t => t.id === currentTeamId.value) || null;
@@ -488,7 +491,6 @@ function onLogout() {
   workspaces.value = [];
   currentTeamId.value = '';
   currentWorkspaceId.value = '';
-  toastRef.value?.info('Đã đăng xuất khỏi hệ thống');
 }
 
 // ==========================================
@@ -647,8 +649,6 @@ async function refreshData() {
 
     // 4. Tải mới Công việc (Tasks), Cán bộ (Users) và Thống kê (Stats)
     await refreshScopedData();
-
-    toastRef.value?.info('Đã làm mới dữ liệu Đội nhóm, Không gian & Công việc!');
   } catch (err) {
     console.error('Lỗi refreshData:', err);
     toastRef.value?.warning('Lỗi làm mới dữ liệu!');

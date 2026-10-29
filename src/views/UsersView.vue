@@ -3,7 +3,7 @@
     <!-- Toolbar -->
     <div class="users-toolbar">
       <div class="toolbar-left">
-        <h2 class="section-title">Danh sách tài khoản Cán bộ ({{ users.length }})</h2>
+        <h2 class="section-title">Danh sách tài khoản Cán bộ ({{ filteredUsers.length }})</h2>
         <span class="section-sub">Phân quyền vai trò và quản lý trạng thái tài khoản hệ thống</span>
       </div>
 
@@ -135,11 +135,15 @@ const props = defineProps({
 
 defineEmits(['add-user', 'edit-user', 'toggle-status', 'delete-user']);
 
+const staffUsers = computed(() =>
+  (props.users || []).filter((u) => u.role !== 'super_admin')
+);
+
 const filteredUsers = computed(() => {
-  if (!props.searchQuery) return props.users;
+  if (!props.searchQuery) return staffUsers.value;
   const q = props.searchQuery.toLowerCase();
-  return props.users.filter(u => 
-    u.full_name.toLowerCase().includes(q) || 
+  return staffUsers.value.filter((u) =>
+    u.full_name.toLowerCase().includes(q) ||
     u.email.toLowerCase().includes(q)
   );
 });

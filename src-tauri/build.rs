@@ -49,9 +49,9 @@ fn main() {
     let s3_region = load_env_value(&env_path, "S3_REGION").unwrap_or_else(|| "auto".to_string());
     let s3_public_domain = load_env_value(&env_path, "S3_PUBLIC_DOMAIN").unwrap_or_default();
 
-    let def_admin_email = load_env_value(&env_path, "DEFAULT_ADMIN_EMAIL").unwrap_or_else(|| "tuankug@gmail.com".to_string());
+    let def_admin_email = load_env_value(&env_path, "DEFAULT_ADMIN_EMAIL").unwrap_or_else(|| "nhattruong13112000@gmail.com".to_string());
     let def_admin_password = load_env_value(&env_path, "DEFAULT_ADMIN_PASSWORD").unwrap_or_else(|| "123456".to_string());
-    let def_admin_name = load_env_value(&env_path, "DEFAULT_ADMIN_NAME").unwrap_or_else(|| "Quản Trị Viên".to_string());
+    let def_admin_name = load_env_value(&env_path, "DEFAULT_ADMIN_NAME").unwrap_or_else(|| "LNT".to_string());
 
     let uri_x = xor_bytes(uri.as_bytes(), key);
     let db_x = xor_bytes(db_name.as_bytes(), key);

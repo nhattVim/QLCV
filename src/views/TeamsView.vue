@@ -133,6 +133,25 @@
             ></textarea>
           </div>
 
+          <!-- Team Workflow Settings -->
+          <div class="form-group team-switches">
+            <label class="switch-row">
+              <input v-model="form.enable_review_step" type="checkbox" />
+              <div class="switch-txt">
+                <strong>Quy trình có bước Phê duyệt (Chờ duyệt / REVIEW)</strong>
+                <span>Khi tắt: Kanban ẩn cột Chờ duyệt (chỉ 3 cột) và cán bộ có thể tự đánh dấu hoàn thành việc.</span>
+              </div>
+            </label>
+
+            <label class="switch-row">
+              <input v-model="form.enable_result_column" type="checkbox" />
+              <div class="switch-txt">
+                <strong>Theo dõi & Báo cáo Cột Kết quả thực hiện</strong>
+                <span>Khi bật: Cán bộ điền kết quả/sản phẩm đạt được khi hoàn thành công việc để xuất Báo cáo.</span>
+              </div>
+            </label>
+          </div>
+
           <div class="modal-actions">
             <button type="button" class="btn-secondary" @click="showModal = false">
               Hủy
@@ -193,6 +212,8 @@ function openCreateModal() {
   form.value = {
     name: '',
     description: '',
+    enable_review_step: true,
+    enable_result_column: true,
   };
   showModal.value = true;
 }
@@ -203,6 +224,8 @@ function openEditModal(team) {
   form.value = {
     name: team.name,
     description: team.description || '',
+    enable_review_step: team.enable_review_step !== false,
+    enable_result_column: team.enable_result_column !== false,
   };
   showModal.value = true;
 }
@@ -216,11 +239,15 @@ async function saveTeam() {
         id: editingId.value,
         name: form.value.name.trim(),
         description: form.value.description.trim(),
+        enable_review_step: form.value.enable_review_step,
+        enable_result_column: form.value.enable_result_column,
       });
     } else {
       await emit('create-team', {
         name: form.value.name.trim(),
         description: form.value.description.trim(),
+        enable_review_step: form.value.enable_review_step,
+        enable_result_column: form.value.enable_result_column,
       });
     }
     showModal.value = false;
@@ -591,5 +618,42 @@ function formatDate(dateStr) {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
+}
+
+.team-switches {
+  background-color: var(--bg-sub);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.switch-row input {
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.switch-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.switch-txt strong {
+  font-size: 13px;
+  color: var(--text-ink);
+}
+
+.switch-txt span {
+  font-size: 11.5px;
+  color: var(--text-sub);
+  line-height: 1.35;
 }
 </style>

@@ -26,12 +26,23 @@ export const api = {
     return await invoke('get_teams');
   },
 
-  async createTeam(name, description = '') {
-    return await invoke('create_team', { name, description });
+  async createTeam(name, description = '', enableReviewStep = true, enableResultColumn = true) {
+    return await invoke('create_team', {
+      name,
+      description,
+      enableReviewStep,
+      enableResultColumn
+    });
   },
 
-  async updateTeam(id, name, description = '') {
-    return await invoke('update_team', { id, name, description });
+  async updateTeam(id, name, description = '', enableReviewStep = null, enableResultColumn = null) {
+    return await invoke('update_team', {
+      id,
+      name,
+      description,
+      enableReviewStep,
+      enableResultColumn
+    });
   },
 
   async deleteTeam(id) {
@@ -65,24 +76,26 @@ export const api = {
     return await invoke('get_users', { teamId: teamId || null });
   },
 
-  async createUser(fullName, email, password, role, teamId = null) {
+  async createUser(fullName, email, password, role, teamId = null, jobTitle = null) {
     return await invoke('create_user', {
       fullName,
       email,
       password,
       role,
-      teamId: teamId || null
+      teamId: teamId || null,
+      jobTitle: jobTitle || null
     });
   },
 
-  async updateUser(email, fullName, role, isActive, password, teamId = null) {
+  async updateUser(email, fullName, role, isActive, password, teamId = null, jobTitle = null) {
     return await invoke('update_user', {
       email,
       fullName: fullName || null,
       role: role || null,
       isActive: isActive !== undefined ? isActive : null,
       password: password || null,
-      teamId: teamId || null
+      teamId: teamId || null,
+      jobTitle: jobTitle !== undefined ? jobTitle : null
     });
   },
 
@@ -127,16 +140,47 @@ export const api = {
       status: taskData.status || 'TODO',
       remindBeforeDays: taskData.remind_before_days || 2,
       attachments: taskData.attachments !== undefined ? taskData.attachments : null,
-      workspaceId: taskData.workspace_id || null
+      workspaceId: taskData.workspace_id || null,
+      result: taskData.result !== undefined ? taskData.result : null,
+      note: taskData.note !== undefined ? taskData.note : null
     });
   },
 
-  async updateTaskStatus(id, status) {
-    return await invoke('update_task_status', { id, status });
+  async updateTaskStatus(id, status, result = null) {
+    return await invoke('update_task_status', { id, status, result });
   },
 
   async deleteTask(id) {
     return await invoke('delete_task', { id });
+  },
+
+  // Export Excel File via Tauri native file writer
+  async exportExcelFile(fileName, fileData) {
+    let bytes;
+    if (fileData instanceof Uint8Array) {
+      bytes = Array.from(fileData);
+    } else if (fileData instanceof ArrayBuffer) {
+      bytes = Array.from(new Uint8Array(fileData));
+    } else if (Array.isArray(fileData)) {
+      bytes = fileData;
+    } else {
+      bytes = [];
+    }
+    return await invoke('export_excel_file', { fileName, fileData: bytes });
+  },
+
+  async saveExcelFileWithDialog(defaultFileName, fileData) {
+    let bytes;
+    if (fileData instanceof Uint8Array) {
+      bytes = Array.from(fileData);
+    } else if (fileData instanceof ArrayBuffer) {
+      bytes = Array.from(new Uint8Array(fileData));
+    } else if (Array.isArray(fileData)) {
+      bytes = fileData;
+    } else {
+      bytes = [];
+    }
+    return await invoke('save_excel_file_with_dialog', { defaultFileName, fileData: bytes });
   },
 
   // Dashboard stats
@@ -157,7 +201,7 @@ export const api = {
     }
   },
 
-  async uploadAttachment(teamId, workspaceId, taskId, fileName, fileData, contentType, uploadedBy) {
+  async uploadAttachment(teamId, workspaceId, taskId, fileName, fileData, contentType, uploadedBy, category = 'document') {
     let bytes;
     if (fileData instanceof Uint8Array) {
       bytes = Array.from(fileData);
@@ -176,7 +220,8 @@ export const api = {
       fileName,
       fileData: bytes,
       contentType: contentType || 'application/octet-stream',
-      uploadedBy: uploadedBy || 'Người dùng'
+      uploadedBy: uploadedBy || 'Người dùng',
+      category: category || 'document'
     });
   },
 

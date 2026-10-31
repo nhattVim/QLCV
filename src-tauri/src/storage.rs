@@ -127,6 +127,7 @@ pub async fn upload_attachment(
     data: &[u8],
     content_type: &str,
     uploaded_by: &str,
+    category: Option<String>,
 ) -> Result<TaskAttachment, String> {
     let (bucket, cfg) = get_bucket_client()?;
 
@@ -178,13 +179,42 @@ pub async fn upload_attachment(
         uploaded_by: uploaded_by.to_string(),
         uploaded_at: Utc::now().to_rfc3339(),
         download_url,
+        category: category.or_else(|| Some("document".to_string())),
     })
 }
 
 pub async fn delete_attachment(object_key: &str) -> Result<(), String> {
+    let trimmed = object_key.trim();
+    if !is_storage_configured() || trimmed.is_empty() {
+        return Ok(());
+    }
     let (bucket, _) = get_bucket_client()?;
-    let _ = bucket.delete_object(object_key).await
+    let _ = bucket.delete_object(trimmed).await
         .map_err(|e| format!("Lỗi xóa tệp trên Cloudflare R2: {}", e))?;
+    Ok(())
+}
+
+pub async fn delete_attachments_batch(object_keys: &[String]) -> Result<(), String> {
+    if !is_storage_configured() || object_keys.is_empty() {
+        return Ok(());
+    }
+    let (bucket, _) = match get_bucket_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[Storage] Bỏ qua xóa tệp R2: {}", e);
+            return Ok(());
+        }
+    };
+
+    for key in object_keys {
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            if let Err(e) = bucket.delete_object(trimmed).await {
+                eprintln!("[Storage] Cảnh báo lỗi xóa tệp R2 '{}': {}", trimmed, e);
+            }
+        }
+    }
+
     Ok(())
 }
 

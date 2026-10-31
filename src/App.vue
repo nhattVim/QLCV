@@ -90,39 +90,6 @@
         </div>
       </header>
 
-      <!-- Stat Metric Banner -->
-      <section class="stat-banner">
-        <div class="stat-card" style="border-top-color: #6366f1;">
-          <span class="stat-label" style="color: #6366f1;">TỔNG CÔNG VIỆC</span>
-          <span class="stat-val tabular-nums">{{ stats.total }}</span>
-        </div>
-
-        <div class="stat-card" style="border-top-color: #64748b;">
-          <span class="stat-label" style="color: #64748b;">CHƯA LÀM</span>
-          <span class="stat-val tabular-nums">{{ stats.todo }}</span>
-        </div>
-
-        <div class="stat-card" style="border-top-color: #2563eb;">
-          <span class="stat-label" style="color: #2563eb;">ĐANG THỰC HIỆN</span>
-          <span class="stat-val tabular-nums">{{ stats.in_progress }}</span>
-        </div>
-
-        <div class="stat-card" style="border-top-color: #d97706;">
-          <span class="stat-label" style="color: #d97706;">CHỜ PHÊ DUYỆT</span>
-          <span class="stat-val tabular-nums">{{ stats.review }}</span>
-        </div>
-
-        <div class="stat-card" style="border-top-color: #16a34a;">
-          <span class="stat-label" style="color: #16a34a;">HOÀN THÀNH</span>
-          <span class="stat-val tabular-nums">{{ stats.done }}</span>
-        </div>
-
-        <div class="stat-card" style="border-top-color: #dc2626;">
-          <span class="stat-label" style="color: #dc2626;">⚠️ QUÁ HẠN</span>
-          <span class="stat-val tabular-nums" style="color: #dc2626;">{{ stats.overdue }}</span>
-        </div>
-      </section>
-
       <!-- Workspace Navigation Tabs -->
       <section class="workspace-main">
         <nav class="tabs-nav">
@@ -171,7 +138,17 @@
             :class="{ active: currentTab === 'reports' }"
             @click="currentTab = 'reports'"
           >
-            📊 Giám sát & Báo cáo
+            📊 Báo cáo tiến độ
+          </button>
+
+          <!-- 6. Team Settings Tab (Admin & Super Admin) -->
+          <button 
+            v-if="isAdmin"
+            class="tab-btn" 
+            :class="{ active: currentTab === 'settings' }"
+            @click="currentTab = 'settings'"
+          >
+            ⚙️ Cài đặt Đội nhóm
           </button>
         </nav>
 
@@ -207,6 +184,7 @@
             :users="users"
             :user-map="userMap"
             :current-user="currentUser"
+            :current-team="currentTeam"
             :workspace-name="currentWorkspace?.name"
             :team-name="currentTeam?.name"
             @add-task="openNewTaskModal"
@@ -235,8 +213,24 @@
             :tasks="tasks"
             :users="users"
             :user-map="userMap"
+            :current-user="currentUser"
             :team-name="currentTeam?.name"
+            :current-team="currentTeam"
             :workspace-name="currentWorkspace?.name"
+            :workspaces="workspaces"
+            @view-task="openViewTaskModal"
+            @task-updated="refreshScopedData"
+          />
+
+          <!-- Tab 6: Team Settings (Admin & Super Admin) -->
+          <TeamSettingsView 
+            v-else-if="currentTab === 'settings' && isAdmin"
+            :current-team="currentTeam"
+            :teams="teams"
+            :current-user="currentUser"
+            :is-super-admin="isSuperAdmin"
+            @update-team-settings="onUpdateTeamSettings"
+            @select-team="onSelectTeamFromSettings"
           />
         </main>
       </section>
@@ -247,8 +241,10 @@
     <TaskModal 
       v-if="showTaskModal"
       :task-data="selectedTask"
+      :modal-mode="modalMode"
       :users="users"
       :current-user="currentUser"
+      :current-team="currentTeam"
       :current-team-id="currentTeamId"
       :current-workspace-id="currentWorkspaceId"
       :workspaces="workspaces"
@@ -315,6 +311,7 @@ import WorkspacesView from './views/WorkspacesView.vue';
 import TasksView from './views/TasksView.vue';
 import UsersView from './views/UsersView.vue';
 import ReportsView from './views/ReportsView.vue';
+import TeamSettingsView from './views/TeamSettingsView.vue';
 
 // State
 const toastRef = ref(null);
@@ -344,6 +341,7 @@ const isRefreshing = ref(false);
 // Modals
 const showTaskModal = ref(false);
 const selectedTask = ref(null);
+const modalMode = ref('edit'); // 'create' | 'edit' | 'view'
 
 const showUserModal = ref(false);
 const selectedUser = ref(null);
@@ -683,6 +681,13 @@ async function onSelectTeamFromView(teamId) {
   currentTab.value = 'workspaces';
 }
 
+async function onSelectTeamFromSettings(teamId) {
+  if (currentTeamId.value !== teamId) {
+    currentTeamId.value = teamId;
+    await onTeamSelectChange();
+  }
+}
+
 async function onSelectWorkspaceFromView(workspaceId) {
   currentWorkspaceId.value = workspaceId;
   await onWorkspaceSelectChange();
@@ -694,9 +699,9 @@ async function onSelectWorkspaceFromView(workspaceId) {
 // TEAMS CRUD (SUPER ADMIN)
 // ==========================================
 
-async function onCreateTeam({ name, description }) {
+async function onCreateTeam({ name, description, enable_review_step, enable_result_column }) {
   try {
-    const newTeam = await api.createTeam(name, description);
+    const newTeam = await api.createTeam(name, description, enable_review_step, enable_result_column);
     teams.value = await api.getTeams();
     currentTeamId.value = newTeam.id;
     await onTeamSelectChange();
@@ -706,13 +711,25 @@ async function onCreateTeam({ name, description }) {
   }
 }
 
-async function onUpdateTeam({ id, name, description }) {
+async function onUpdateTeam({ id, name, description, enable_review_step, enable_result_column }) {
   try {
-    await api.updateTeam(id, name, description);
+    await api.updateTeam(id, name, description, enable_review_step, enable_result_column);
     teams.value = await api.getTeams();
+    await refreshScopedData();
     toastRef.value?.success(`Đã cập nhật đội nhóm "${name}"!`);
   } catch (err) {
     toastRef.value?.error(`Lỗi cập nhật team: ${err}`);
+  }
+}
+
+async function onUpdateTeamSettings({ id, name, description, enable_review_step, enable_result_column }) {
+  try {
+    await api.updateTeam(id, name, description, enable_review_step, enable_result_column);
+    teams.value = await api.getTeams();
+    await refreshScopedData();
+    toastRef.value?.success('Đã lưu cấu hình cài đặt đội nhóm thành công!');
+  } catch (err) {
+    toastRef.value?.error(`Lỗi lưu cấu hình: ${err}`);
   }
 }
 
@@ -781,16 +798,19 @@ function openNewTaskModal() {
     workspace_id: currentWorkspaceId.value,
     team_id: currentTeamId.value,
   };
+  modalMode.value = 'create';
   showTaskModal.value = true;
 }
 
 function openViewTaskModal(task) {
   selectedTask.value = { ...task };
+  modalMode.value = 'view';
   showTaskModal.value = true;
 }
 
 function openEditTaskModal(task) {
   selectedTask.value = { ...task };
+  modalMode.value = 'edit';
   showTaskModal.value = true;
 }
 
@@ -809,8 +829,8 @@ function onAttachmentChanged({ taskId, attachments }) {
 async function onSaveTask(taskFormData) {
   try {
     if (!isAdmin.value && selectedTask.value?.id) {
-      // Regular user only changes status
-      await api.updateTaskStatus(selectedTask.value.id, taskFormData.status);
+      // Regular user updates status & result
+      await api.updateTaskStatus(selectedTask.value.id, taskFormData.status, taskFormData.result);
       toastRef.value?.success('Đã cập nhật tiến độ công việc!');
     } else if (selectedTask.value?.id) {
       await api.updateTask(selectedTask.value.id, {
@@ -855,22 +875,36 @@ async function quickApproveTask(taskId) {
   toastRef.value?.success('Đã phê duyệt hoàn thành công việc!');
 }
 
-async function onStatusChange({ id, status }) {
+async function onStatusChange({ id, status, result }) {
   const task = tasks.value.find(t => t.id === id);
   if (!task) return;
   const oldStatus = task.status;
-  if (oldStatus === status) return;
+  const oldResult = task.result;
+  const oldCompletedAt = task.completed_at;
+  if (oldStatus === status && (result === undefined || oldResult === result)) return;
 
   // 1. Phản hồi giao diện tức thì (Optimistic 0ms UI update)
   task.status = status;
+  if (result !== undefined && result !== null) {
+    task.result = result;
+  }
+  if (status === 'DONE') {
+    if (!task.completed_at) {
+      task.completed_at = new Date().toISOString();
+    }
+  } else {
+    task.completed_at = null;
+  }
   updateLocalStats();
 
   // 2. Đồng bộ ngầm lên MongoDB Atlas mà không gây đứng hình/giật lag
   try {
-    await api.updateTaskStatus(id, status);
+    await api.updateTaskStatus(id, status, result);
   } catch (err) {
     // Hoàn tác nếu có lỗi mạng
     task.status = oldStatus;
+    task.result = oldResult;
+    task.completed_at = oldCompletedAt;
     updateLocalStats();
     toastRef.value?.error('Lỗi mạng: Không thể cập nhật trạng thái trên máy chủ!');
   }
@@ -899,7 +933,8 @@ async function onSaveUser(userFormData) {
         userFormData.role,
         userFormData.is_active,
         userFormData.password,
-        userFormData.team_id || null
+        userFormData.team_id || null,
+        userFormData.job_title || null
       );
       toastRef.value?.success('Đã cập nhật thông tin cán bộ!');
     } else {
@@ -908,7 +943,8 @@ async function onSaveUser(userFormData) {
         userFormData.email,
         userFormData.password,
         userFormData.role,
-        userFormData.team_id || currentTeamId.value || null
+        userFormData.team_id || currentTeamId.value || null,
+        userFormData.job_title || null
       );
       toastRef.value?.success('Đã thêm cán bộ mới thành công!');
     }
@@ -1149,41 +1185,6 @@ function onAppUpdated() {
   to { transform: rotate(360deg); }
 }
 
-/* ================= STAT METRIC BANNER ================= */
-.stat-banner {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 10px;
-  padding: 12px 18px 6px;
-  flex-shrink: 0;
-}
-
-.stat-card {
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-top-width: 3px;
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-
-.stat-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-align: center;
-}
-
-.stat-val {
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--text-ink);
-  line-height: 1.2;
-}
-
 .workspace-main {
   flex: 1;
   min-height: 0;
@@ -1213,24 +1214,32 @@ function onAppUpdated() {
   background: transparent;
   margin-bottom: -1px;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
+
+.tab-btn:first-child {
+  border-top-left-radius: var(--radius-lg);
+}
+
 .tab-btn:hover {
   background-color: var(--bg-hover);
   color: var(--text-ink);
 }
+
 .tab-btn.active {
   background-color: var(--bg-surface);
   color: var(--accent);
-  border-color: var(--border);
+  border: 1px solid var(--border);
   border-bottom-color: var(--bg-surface);
   font-weight: 700;
+  z-index: 2;
 }
 
 .tab-content {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 16px 28px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-surface);

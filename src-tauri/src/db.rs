@@ -271,6 +271,8 @@ impl DbState {
                 let res = teams_col.insert_one(doc! {
                     "name": "Đội ngũ chính",
                     "description": "Team mặc định cho toàn bộ thành viên hệ thống",
+                    "enable_review_step": true,
+                    "enable_result_column": true,
                     "created_at": mongodb::bson::DateTime::from_chrono(now),
                     "updated_at": mongodb::bson::DateTime::from_chrono(now)
                 }).await.map_err(|e| e.to_string())?;
@@ -360,6 +362,8 @@ impl DbState {
             let id = doc.get_object_id("_id").ok().map(|oid| oid.to_hex());
             let name = doc.get_str("name").unwrap_or_default().to_string();
             let description = doc.get_str("description").unwrap_or_default().to_string();
+            let enable_review_step = doc.get_bool("enable_review_step").unwrap_or(true);
+            let enable_result_column = doc.get_bool("enable_result_column").unwrap_or(true);
 
             let created_at = match doc.get("created_at") {
                 Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
@@ -392,21 +396,33 @@ impl DbState {
                 member_count,
                 workspace_count,
                 task_count,
+                enable_review_step,
+                enable_result_column,
             });
         }
 
         Ok(teams)
     }
 
-    pub async fn create_team(&self, name: &str, description: &str) -> Result<TeamDto, String> {
+    pub async fn create_team(
+        &self,
+        name: &str,
+        description: &str,
+        enable_review_step: Option<bool>,
+        enable_result_column: Option<bool>,
+    ) -> Result<TeamDto, String> {
         let db = self.get_db().await?;
         let teams_col = db.collection::<Document>("teams");
         let ws_col = db.collection::<Document>("workspaces");
 
         let now = Utc::now();
+        let review_step = enable_review_step.unwrap_or(true);
+        let result_column = enable_result_column.unwrap_or(true);
         let new_doc = doc! {
             "name": name.trim(),
             "description": description.trim(),
+            "enable_review_step": review_step,
+            "enable_result_column": result_column,
             "created_at": mongodb::bson::DateTime::from_chrono(now),
             "updated_at": mongodb::bson::DateTime::from_chrono(now),
         };
@@ -436,22 +452,54 @@ impl DbState {
             member_count: 0,
             workspace_count: 1,
             task_count: 0,
+            enable_review_step: review_step,
+            enable_result_column: result_column,
         })
     }
 
-    pub async fn update_team(&self, id: &str, name: &str, description: &str) -> Result<bool, String> {
+    pub async fn update_team(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+        enable_review_step: Option<bool>,
+        enable_result_column: Option<bool>,
+    ) -> Result<bool, String> {
         let db = self.get_db().await?;
         let teams_col = db.collection::<Document>("teams");
 
         let oid = ObjectId::parse_str(id).map_err(|_| "Mã Team không hợp lệ!".to_string())?;
         let now = Utc::now();
 
-        let update_doc = doc! {
-            "$set": {
-                "name": name.trim(),
-                "description": description.trim(),
-                "updated_at": mongodb::bson::DateTime::from_chrono(now),
+        let mut set_doc = doc! {
+            "name": name.trim(),
+            "description": description.trim(),
+            "updated_at": mongodb::bson::DateTime::from_chrono(now),
+        };
+        if let Some(rev) = enable_review_step {
+            set_doc.insert("enable_review_step", rev);
+            if !rev {
+                // Khi tắt tính năng duyệt: chuyển toàn bộ ticket đang ở tag "REVIEW" về "IN_PROGRESS"
+                let tasks_col = db.collection::<Document>("tasks");
+                let filter_review = doc! {
+                    "team_id": id.trim(),
+                    "status": "REVIEW"
+                };
+                let update_review = doc! {
+                    "$set": {
+                        "status": "IN_PROGRESS",
+                        "updated_at": mongodb::bson::DateTime::from_chrono(now)
+                    }
+                };
+                let _ = tasks_col.update_many(filter_review, update_review).await;
             }
+        }
+        if let Some(res) = enable_result_column {
+            set_doc.insert("enable_result_column", res);
+        }
+
+        let update_doc = doc! {
+            "$set": set_doc
         };
 
         teams_col.update_one(doc! { "_id": oid }, update_doc).await
@@ -469,21 +517,36 @@ impl DbState {
 
         let oid = ObjectId::parse_str(id).map_err(|_| "Mã Team không hợp lệ!".to_string())?;
 
-        // 1. Delete team
+        // 1. Thu thập tất cả object_key của các công việc thuộc team này để xóa trên R2
+        let mut object_keys = Vec::new();
+        if let Ok(mut cursor) = tasks_col.find(doc! { "team_id": id }).await {
+            while let Ok(true) = cursor.advance().await {
+                if let Ok(task_doc) = cursor.deserialize_current() {
+                    object_keys.extend(Self::extract_attachment_keys_from_doc(&task_doc));
+                }
+            }
+        }
+
+        // 2. Delete team
         teams_col.delete_one(doc! { "_id": oid }).await
             .map_err(|e| format!("Lỗi xóa team: {}", e))?;
 
-        // 2. Delete all workspaces in team
+        // 3. Delete all workspaces in team
         let _ = ws_col.delete_many(doc! { "team_id": id }).await;
 
-        // 3. Delete all tasks in team
+        // 4. Delete all tasks in team
         let _ = tasks_col.delete_many(doc! { "team_id": id }).await;
 
-        // 4. Clear team_id for users who were in this team
+        // 5. Clear team_id for users who were in this team
         let _ = users_col.update_many(
             doc! { "team_id": id },
             doc! { "$set": { "team_id": Bson::Null } }
         ).await;
+
+        // 6. Xóa các tệp đính kèm trên Cloudflare R2
+        if !object_keys.is_empty() {
+            let _ = crate::storage::delete_attachments_batch(&object_keys).await;
+        }
 
         Ok(true)
     }
@@ -613,12 +676,27 @@ impl DbState {
 
         let oid = ObjectId::parse_str(id).map_err(|_| "Mã Không gian làm việc không hợp lệ!".to_string())?;
 
-        // 1. Delete workspace
+        // 1. Thu thập tất cả object_key của các công việc thuộc workspace này để xóa trên R2
+        let mut object_keys = Vec::new();
+        if let Ok(mut cursor) = tasks_col.find(doc! { "workspace_id": id }).await {
+            while let Ok(true) = cursor.advance().await {
+                if let Ok(task_doc) = cursor.deserialize_current() {
+                    object_keys.extend(Self::extract_attachment_keys_from_doc(&task_doc));
+                }
+            }
+        }
+
+        // 2. Delete workspace
         ws_col.delete_one(doc! { "_id": oid }).await
             .map_err(|e| format!("Lỗi xóa không gian làm việc: {}", e))?;
 
-        // 2. Delete tasks in this workspace
+        // 3. Delete tasks in this workspace
         let _ = tasks_col.delete_many(doc! { "workspace_id": id }).await;
+
+        // 4. Xóa các tệp đính kèm trên Cloudflare R2
+        if !object_keys.is_empty() {
+            let _ = crate::storage::delete_attachments_batch(&object_keys).await;
+        }
 
         Ok(true)
     }
@@ -652,6 +730,7 @@ impl DbState {
         let role = user_doc.get_str("role").unwrap_or("user").to_string();
         let email = user_doc.get_str("email").unwrap_or("").to_string();
         let team_id = user_doc.get_str("team_id").ok().map(|s| s.to_string());
+        let job_title = user_doc.get_str("job_title").ok().map(|s| s.to_string());
 
         let created_at = match user_doc.get("created_at") {
             Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
@@ -667,6 +746,7 @@ impl DbState {
             is_active,
             team_id,
             created_at,
+            job_title,
         })
     }
 
@@ -699,6 +779,7 @@ impl DbState {
             let role = doc.get_str("role").unwrap_or("user").to_string();
             let is_active = doc.get_bool("is_active").unwrap_or(true);
             let team_id = doc.get_str("team_id").ok().map(|s| s.to_string());
+            let job_title = doc.get_str("job_title").ok().map(|s| s.to_string());
             let created_at = match doc.get("created_at") {
                 Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
                 Some(Bson::String(s)) => Some(s.clone()),
@@ -713,6 +794,7 @@ impl DbState {
                 is_active,
                 team_id,
                 created_at,
+                job_title,
             });
         }
 
@@ -726,6 +808,7 @@ impl DbState {
         password: &str,
         role: &str,
         team_id: Option<String>,
+        job_title: Option<String>,
     ) -> Result<UserSafe, String> {
         if role == "super_admin" {
             return Err("Không được phép cấp vai trò Super Admin!".to_string());
@@ -758,6 +841,12 @@ impl DbState {
             }
         }
 
+        if let Some(ref jt) = job_title {
+            if !jt.trim().is_empty() {
+                new_doc.insert("job_title", jt.trim());
+            }
+        }
+
         let insert_res = col.insert_one(new_doc).await
             .map_err(|e| format!("Không thể tạo cán bộ: {}", e))?;
 
@@ -771,6 +860,7 @@ impl DbState {
             is_active: true,
             team_id,
             created_at: Some(now.to_rfc3339()),
+            job_title,
         })
     }
 
@@ -782,6 +872,7 @@ impl DbState {
         is_active: Option<bool>,
         password: Option<String>,
         team_id: Option<String>,
+        job_title: Option<String>,
     ) -> Result<bool, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("users");
@@ -809,6 +900,9 @@ impl DbState {
             } else {
                 update_doc.insert("team_id", tid.trim());
             }
+        }
+        if let Some(jt) = job_title {
+            update_doc.insert("job_title", jt.trim());
         }
         if let Some(pwd) = password {
             if !pwd.trim().is_empty() {
@@ -988,6 +1082,8 @@ impl DbState {
         remind_before_days: Option<i32>,
         attachments: Option<Vec<TaskAttachment>>,
         workspace_id: Option<String>,
+        result: Option<String>,
+        note: Option<String>,
     ) -> Result<bool, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("tasks");
@@ -1017,6 +1113,22 @@ impl DbState {
             "updated_at": mongodb::bson::DateTime::from_chrono(now),
             "remind_before_days": days,
         };
+        let mut unset_doc = doc! {};
+
+        if let Some(ref res) = result {
+            set_doc.insert("result", res.trim());
+        }
+        if let Some(ref n) = note {
+            set_doc.insert("note", n.trim());
+        }
+        let old_status = old_doc.get_str("status").unwrap_or("TODO");
+        if status == "DONE" {
+            if old_status != "DONE" || !old_doc.contains_key("completed_at") {
+                set_doc.insert("completed_at", mongodb::bson::DateTime::from_chrono(now));
+            }
+        } else {
+            unset_doc.insert("completed_at", "");
+        }
 
         if let Some(ref wid) = workspace_id {
             if !wid.trim().is_empty() {
@@ -1028,8 +1140,6 @@ impl DbState {
             let arr = Bson::Array(atts.into_iter().map(Self::attachment_to_doc).map(Bson::Document).collect());
             set_doc.insert("attachments", arr);
         }
-
-        let mut unset_doc = doc! {};
 
         if let Some(due_utc) = parsed_due_utc {
             set_doc.insert("due_date", mongodb::bson::DateTime::from_chrono(due_utc));
@@ -1056,20 +1166,42 @@ impl DbState {
         Ok(true)
     }
 
-    pub async fn update_task_status(&self, id: &str, status: &str) -> Result<bool, String> {
+    pub async fn update_task_status(&self, id: &str, status: &str, result: Option<String>) -> Result<bool, String> {
         let db = self.get_db().await?;
         let col = db.collection::<Document>("tasks");
 
         let oid = ObjectId::parse_str(id)
             .map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
 
+        let old_doc = col.find_one(doc! { "_id": oid }).await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Công việc không tồn tại!".to_string())?;
+
+        let old_status = old_doc.get_str("status").unwrap_or("TODO");
         let now = Utc::now();
-        let update_doc = doc! {
-            "$set": {
-                "status": status,
-                "updated_at": mongodb::bson::DateTime::from_chrono(now)
-            }
+        let mut set_doc = doc! {
+            "status": status,
+            "updated_at": mongodb::bson::DateTime::from_chrono(now)
         };
+        let mut unset_doc = doc! {};
+
+        if let Some(ref res) = result {
+            set_doc.insert("result", res.trim());
+        }
+        if status == "DONE" {
+            if old_status != "DONE" || !old_doc.contains_key("completed_at") {
+                set_doc.insert("completed_at", mongodb::bson::DateTime::from_chrono(now));
+            }
+        } else {
+            unset_doc.insert("completed_at", "");
+        }
+
+        let mut update_doc = doc! {
+            "$set": set_doc
+        };
+        if !unset_doc.is_empty() {
+            update_doc.insert("$unset", unset_doc);
+        }
 
         col.update_one(doc! { "_id": oid }, update_doc).await
             .map_err(|e| format!("Lỗi cập nhật trạng thái: {}", e))?;
@@ -1084,8 +1216,20 @@ impl DbState {
         let oid = ObjectId::parse_str(id)
             .map_err(|_| "Mã công việc không hợp lệ!".to_string())?;
 
+        // 1. Thu thập object_keys trước khi xóa
+        let mut object_keys = Vec::new();
+        if let Ok(Some(task_doc)) = col.find_one(doc! { "_id": oid }).await {
+            object_keys.extend(Self::extract_attachment_keys_from_doc(&task_doc));
+        }
+
+        // 2. Xóa công việc trong MongoDB
         col.delete_one(doc! { "_id": oid }).await
             .map_err(|e| format!("Lỗi xóa công việc: {}", e))?;
+
+        // 3. Xóa các tệp đính kèm trên Cloudflare R2
+        if !object_keys.is_empty() {
+            let _ = crate::storage::delete_attachments_batch(&object_keys).await;
+        }
 
         Ok(true)
     }
@@ -1194,6 +1338,23 @@ impl DbState {
         Ok(stats)
     }
 
+    pub fn extract_attachment_keys_from_doc(doc: &Document) -> Vec<String> {
+        let mut keys = Vec::new();
+        if let Some(Bson::Array(arr)) = doc.get("attachments") {
+            for b in arr {
+                if let Bson::Document(att_doc) = b {
+                    if let Ok(key) = att_doc.get_str("object_key") {
+                        let trimmed = key.trim();
+                        if !trimmed.is_empty() {
+                            keys.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        keys
+    }
+
     pub fn attachment_to_doc(att: TaskAttachment) -> Document {
         doc! {
             "id": att.id,
@@ -1204,6 +1365,7 @@ impl DbState {
             "uploaded_by": att.uploaded_by,
             "uploaded_at": att.uploaded_at,
             "download_url": att.download_url.unwrap_or_default(),
+            "category": att.category.unwrap_or_else(|| "document".to_string()),
         }
     }
 
@@ -1264,6 +1426,7 @@ impl DbState {
             Some(Bson::Array(arr)) => arr.iter().filter_map(|b| {
                 if let Bson::Document(d) = b {
                     let dl = d.get_str("download_url").ok().filter(|s| !s.is_empty()).map(|s| s.to_string());
+                    let category = d.get_str("category").ok().map(|s| s.to_string());
                     Some(TaskAttachment {
                         id: d.get_str("id").unwrap_or_default().to_string(),
                         file_name: d.get_str("file_name").unwrap_or_default().to_string(),
@@ -1277,6 +1440,7 @@ impl DbState {
                             _ => String::new(),
                         },
                         download_url: dl,
+                        category,
                     })
                 } else {
                     None
@@ -1284,6 +1448,14 @@ impl DbState {
             }).collect(),
             _ => Vec::new(),
         };
+
+        let result = doc.get_str("result").ok().map(|s| s.to_string());
+        let completed_at = match doc.get("completed_at") {
+            Some(Bson::DateTime(dt)) => Some(dt.to_chrono().to_rfc3339()),
+            Some(Bson::String(s)) => Some(s.clone()),
+            _ => None,
+        };
+        let note = doc.get_str("note").ok().map(|s| s.to_string());
 
         TaskDto {
             id,
@@ -1302,6 +1474,9 @@ impl DbState {
             remind_at,
             reminded_at,
             attachments,
+            result,
+            completed_at,
+            note,
         }
     }
 }

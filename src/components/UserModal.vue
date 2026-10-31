@@ -37,6 +37,16 @@
         </div>
 
         <div class="form-group">
+          <label class="form-label">Chức danh / Tổ nghiệp vụ</label>
+          <input 
+            v-model="form.job_title" 
+            type="text" 
+            class="form-control" 
+            placeholder="Ví dụ: Chuyên viên CNTT, Kỹ sư phần mềm, Kế toán viên..."
+          />
+        </div>
+
+        <div class="form-group">
           <label class="form-label">
             Mật khẩu đăng nhập 
             <span v-if="!isEdit" class="required">*</span>
@@ -114,6 +124,7 @@ const loading = ref(false);
 const form = reactive({
   full_name: '',
   email: '',
+  job_title: '',
   password: '',
   role: 'user',
   team_id: props.currentTeamId || '',
@@ -124,6 +135,7 @@ onMounted(() => {
   if (props.userData) {
     form.full_name = props.userData.full_name || '';
     form.email = props.userData.email || '';
+    form.job_title = props.userData.job_title || '';
     form.role = props.userData.role || 'user';
     form.team_id = props.userData.team_id || props.currentTeamId || '';
     form.is_active = props.userData.is_active !== false;

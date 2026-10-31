@@ -38,8 +38,10 @@ async fn create_team(
     state: State<'_, DbState>,
     name: String,
     description: String,
+    enable_review_step: Option<bool>,
+    enable_result_column: Option<bool>,
 ) -> Result<TeamDto, String> {
-    state.create_team(&name, &description).await
+    state.create_team(&name, &description, enable_review_step, enable_result_column).await
 }
 
 #[tauri::command]
@@ -48,8 +50,10 @@ async fn update_team(
     id: String,
     name: String,
     description: String,
+    enable_review_step: Option<bool>,
+    enable_result_column: Option<bool>,
 ) -> Result<bool, String> {
-    state.update_team(&id, &name, &description).await
+    state.update_team(&id, &name, &description, enable_review_step, enable_result_column).await
 }
 
 #[tauri::command]
@@ -109,8 +113,9 @@ async fn create_user(
     password: String,
     role: String,
     team_id: Option<String>,
+    job_title: Option<String>,
 ) -> Result<UserSafe, String> {
-    state.create_user(&full_name, &email, &password, &role, team_id).await
+    state.create_user(&full_name, &email, &password, &role, team_id, job_title).await
 }
 
 #[tauri::command]
@@ -122,8 +127,9 @@ async fn update_user(
     is_active: Option<bool>,
     password: Option<String>,
     team_id: Option<String>,
+    job_title: Option<String>,
 ) -> Result<bool, String> {
-    state.update_user(&email, full_name, role, is_active, password, team_id).await
+    state.update_user(&email, full_name, role, is_active, password, team_id, job_title).await
 }
 
 #[tauri::command]
@@ -190,6 +196,8 @@ async fn update_task(
     remind_before_days: Option<i32>,
     attachments: Option<Vec<TaskAttachment>>,
     workspace_id: Option<String>,
+    result: Option<String>,
+    note: Option<String>,
 ) -> Result<bool, String> {
     state
         .update_task(
@@ -203,8 +211,122 @@ async fn update_task(
             remind_before_days,
             attachments,
             workspace_id,
+            result,
+            note,
         )
         .await
+}
+
+fn apply_excel_table_styling(path_str: &str) {
+    let ps_style = format!(
+        r#"try {{
+    Add-Type -AssemblyName System.IO.Compression;
+    Add-Type -AssemblyName System.IO.Compression.FileSystem;
+    $zip = [System.IO.Compression.ZipFile]::Open('{}', [System.IO.Compression.ZipArchiveMode]::Update);
+
+    $stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Times New Roman"/><family val="2"/></font><font><b/><sz val="11"/><name val="Times New Roman"/><family val="2"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right><top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+    $entry = $zip.GetEntry('xl/styles.xml');
+    if ($entry) {{ $entry.Delete(); }}
+    $newEntry = $zip.CreateEntry('xl/styles.xml');
+    $writer = New-Object System.IO.StreamWriter($newEntry.Open(), [System.Text.Encoding]::UTF8);
+    $writer.Write($stylesXml);
+    $writer.Dispose();
+
+    $sheetEntry = $zip.GetEntry('xl/worksheets/sheet1.xml');
+    if ($sheetEntry) {{
+        $reader = New-Object System.IO.StreamReader($sheetEntry.Open(), [System.Text.Encoding]::UTF8);
+        $sheetContent = $reader.ReadToEnd();
+        $reader.Dispose();
+
+        $sheetContent = [regex]::Replace($sheetContent, '<c r="([A-Z]+)([0-9]+)"', {{
+            param($m)
+            $col = $m.Groups[1].Value
+            $row = $m.Groups[2].Value
+            if ($row -eq "1") {{
+                return "<c r=`"$col$row`" s=`"1`""
+            }} elseif ($col -eq "A" -or $col -eq "D") {{
+                return "<c r=`"$col$row`" s=`"2`""
+            }} else {{
+                return "<c r=`"$col$row`" s=`"3`""
+            }}
+        }});
+        $sheetContent = [regex]::Replace($sheetContent, '<autoFilter[^>]*/>', '');
+        $sheetContent = $sheetContent.Replace('<sheetView workbookViewId="0"/>', '<sheetView showGridLines="1" workbookViewId="0"/>');
+
+        $sheetEntry.Delete();
+        $newSheetEntry = $zip.CreateEntry('xl/worksheets/sheet1.xml');
+        $sheetWriter = New-Object System.IO.StreamWriter($newSheetEntry.Open(), [System.Text.Encoding]::UTF8);
+        $sheetWriter.Write($sheetContent);
+        $sheetWriter.Dispose();
+    }}
+
+    $zip.Dispose();
+}} catch {{}}"#,
+        path_str.replace('\'', "''")
+    );
+
+    let _ = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_style])
+        .output();
+}
+
+#[tauri::command]
+async fn save_excel_file_with_dialog(
+    default_file_name: String,
+    file_data: Vec<u8>,
+) -> Result<Option<String>, String> {
+    let ps_dialog = format!(
+        r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.SaveFileDialog; $d.Filter = 'Excel Workbook (*.xlsx)|*.xlsx|All Files (*.*)|*.*'; $d.FileName = '{}'; $d.InitialDirectory = [Environment]::GetFolderPath('UserProfile') + '\Downloads'; $d.Title = 'Chọn vị trí lưu tệp Báo cáo Excel'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ [Console]::Out.Write($d.FileName) }}"#,
+        default_file_name.replace('\'', "''")
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_dialog])
+        .output()
+        .map_err(|e| format!("Không thể mở hộp thoại chọn tệp: {}", e))?;
+
+    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path_str.is_empty() {
+        return Ok(None);
+    }
+
+    std::fs::write(&path_str, file_data)
+        .map_err(|e| format!("Không thể ghi tệp Excel: {}", e))?;
+
+    apply_excel_table_styling(&path_str);
+
+    Ok(Some(path_str))
+}
+
+#[tauri::command]
+async fn export_excel_file(file_name: String, file_data: Vec<u8>) -> Result<String, String> {
+    let download_dir = if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        let p = std::path::PathBuf::from(userprofile).join("Downloads");
+        if p.exists() {
+            p
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        }
+    } else if let Ok(home) = std::env::var("HOME") {
+        let p = std::path::PathBuf::from(home).join("Downloads");
+        if p.exists() {
+            p
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        }
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    };
+
+    let target_path = download_dir.join(&file_name);
+    std::fs::write(&target_path, file_data)
+        .map_err(|e| format!("Không thể ghi tệp Excel: {}", e))?;
+
+    let path_str = target_path.to_string_lossy().to_string();
+    apply_excel_table_styling(&path_str);
+
+    Ok(path_str)
 }
 
 #[tauri::command]
@@ -212,8 +334,9 @@ async fn update_task_status(
     state: State<'_, DbState>,
     id: String,
     status: String,
+    result: Option<String>,
 ) -> Result<bool, String> {
-    state.update_task_status(&id, &status).await
+    state.update_task_status(&id, &status, result).await
 }
 
 #[tauri::command]
@@ -250,6 +373,7 @@ async fn upload_attachment(
     file_data: Vec<u8>,
     content_type: String,
     uploaded_by: String,
+    category: Option<String>,
 ) -> Result<TaskAttachment, String> {
     let tid_str = team_id.unwrap_or_else(|| "default_team".to_string());
     let wid_str = workspace_id.unwrap_or_else(|| "default_workspace".to_string());
@@ -263,6 +387,7 @@ async fn upload_attachment(
         &file_data,
         &content_type,
         &uploaded_by,
+        category,
     ).await?;
 
     if let Some(ref tid) = task_id {
@@ -348,6 +473,8 @@ pub fn run() {
             delete_attachment,
             get_attachment_url,
             open_attachment,
+            export_excel_file,
+            save_excel_file_with_dialog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

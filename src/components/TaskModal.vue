@@ -3,14 +3,25 @@
     <div class="modal-content ticket-modal">
       <div class="modal-header">
         <h3 class="modal-title">
-          <template v-if="isAdmin">
+          <template v-if="isCurrentlyEditing">
             {{ isEdit ? 'Chỉnh sửa công việc' : 'Giao công việc mới' }}
           </template>
           <template v-else>
             Chi tiết công việc
           </template>
         </h3>
-        <button class="btn-ghost" @click="$emit('close')">✕</button>
+        <div class="header-right-tools">
+          <button 
+            v-if="!isCurrentlyEditing && isAdmin" 
+            type="button" 
+            class="btn-switch-edit" 
+            title="Chuyển sang chế độ chỉnh sửa"
+            @click="localEdit = true"
+          >
+            ✏️ Chỉnh sửa
+          </button>
+          <button type="button" class="btn-ghost" @click="$emit('close')">✕</button>
+        </div>
       </div>
 
       <form class="modal-body ticket-body" @submit.prevent="handleSubmit">
@@ -18,9 +29,9 @@
           <!-- Main Content (Title, Description, Attachments) -->
           <section class="ticket-main">
             <div class="form-group title-group">
-              <label class="form-label">Tiêu đề công việc <span v-if="isAdmin" class="required">*</span></label>
+              <label class="form-label">Tiêu đề công việc <span v-if="isCurrentlyEditing" class="required">*</span></label>
               <input
-                v-if="isAdmin"
+                v-if="isCurrentlyEditing"
                 v-model="form.title"
                 type="text"
                 class="form-control title-input"
@@ -35,33 +46,36 @@
               <label class="form-label">Nội dung chi tiết</label>
               <RichEditor
                 v-model="form.description"
-                :readonly="!isAdmin"
+                :readonly="!isCurrentlyEditing"
                 placeholder="Ghi chú hướng dẫn, yêu cầu, số công văn..."
               />
             </div>
 
-            <!-- Attachments Section -->
-            <div class="form-group attachments-group">
+            <!-- 1. KHỐI TÀI LIỆU GIAO VIỆC: Chỉ hiện khi Admin thêm/sửa ticket HOẶC khi đã có gắn file tài liệu -->
+            <div 
+              v-if="isCurrentlyEditing || documentAttachments.length > 0" 
+              class="form-group attachments-group"
+            >
               <div class="attachments-header">
                 <div class="att-title-wrap">
-                  <span class="att-icon">📎</span>
-                  <span class="att-title">Tệp & Tài liệu đính kèm ({{ attachments.length }})</span>
+                  <span class="att-icon">📄</span>
+                  <span class="att-title">Tài liệu giao việc ({{ documentAttachments.length }})</span>
                   <span v-if="uploading" class="uploading-badge">
                     ⏳ {{ uploadProgressText || 'Đang tải lên...' }}
                   </span>
                 </div>
 
-                <!-- Add Attachment Button -->
-                <div class="att-actions">
+                <!-- Add Attachment Button: Chỉ hiện khi admin thêm hoặc sửa ticket -->
+                <div v-if="isCurrentlyEditing" class="att-actions">
                   <button 
                     type="button" 
                     class="btn-attach" 
                     :disabled="uploading"
-                    title="Chọn tệp từ máy tính để đính kèm"
+                    title="Chọn tài liệu từ máy tính để đính kèm giao cho cán bộ"
                     @click="triggerFileInput"
                   >
                     <span v-if="uploading">⏳ Đang tải...</span>
-                    <span v-else>➕ Thêm tệp</span>
+                    <span v-else>➕ Thêm tài liệu</span>
                   </button>
                   <input 
                     ref="fileInputRef" 
@@ -75,23 +89,17 @@
               </div>
 
               <!-- Storage Unconfigured Notice -->
-              <div v-if="!storageConfigured" class="att-alert-box">
+              <div v-if="!storageConfigured && isCurrentlyEditing" class="att-alert-box">
                 <span class="att-alert-icon">ℹ️</span>
                 <div class="att-alert-text">
                   <strong>Tính năng lưu trữ Cloudflare R2 / S3</strong>
-                  <p>Vui lòng cấu hình <code>S3_ENDPOINT</code>, <code>S3_ACCESS_KEY_ID</code>, <code>S3_SECRET_ACCESS_KEY</code>, <code>S3_BUCKET</code> trong file <code>.env</code> để đính kèm tệp lên đám mây.</p>
+                  <p>Vui lòng cấu hình Cloudflare R2 / S3 trong file <code>.env</code> để đính kèm tệp lên đám mây.</p>
                 </div>
               </div>
 
-              <!-- Upload Error Notice -->
-              <div v-if="uploadError" class="att-error-box">
-                <span>⚠️ {{ uploadError }}</span>
-                <button type="button" class="btn-clear-err" @click="uploadError = ''">✕</button>
-              </div>
-
-              <!-- Dropzone: ONLY shown when there are 0 files uploaded -->
+              <!-- Dropzone: Chỉ hiện khi Admin thêm/sửa và chưa có file nào -->
               <div 
-                v-if="attachments.length === 0 && storageConfigured" 
+                v-if="isCurrentlyEditing && documentAttachments.length === 0 && storageConfigured" 
                 class="att-dropzone"
                 :class="{ 'dragging': isDragging, 'uploading': uploading }"
                 @dragover.prevent="isDragging = true"
@@ -102,16 +110,16 @@
                 <div class="dropzone-content">
                   <span class="dropzone-icon">📁</span>
                   <span class="dropzone-text">
-                    {{ uploading ? (uploadProgressText || 'Đang tải tệp lên Cloudflare R2...') : 'Kéo & thả tệp vào đây hoặc bấm để chọn tệp' }}
+                    {{ uploading ? (uploadProgressText || 'Đang tải tệp lên Cloudflare R2...') : 'Kéo & thả tệp tài liệu vào đây hoặc bấm để chọn tệp' }}
                   </span>
                   <span class="dropzone-sub">(Hỗ trợ PDF, Word, Excel, Hình ảnh, Zip...)</span>
                 </div>
               </div>
 
-              <!-- Attachments List: ONLY list of files is shown when files exist (no dropzone text) -->
-              <div v-if="attachments.length > 0" class="attachments-list">
+              <!-- Document Attachments List: Hiện danh sách file tài liệu -->
+              <div v-if="documentAttachments.length > 0" class="attachments-list">
                 <div 
-                  v-for="att in attachments" 
+                  v-for="att in documentAttachments" 
                   :key="att.id" 
                   class="att-item"
                 >
@@ -152,7 +160,82 @@
                     </button>
 
                     <button 
-                      v-if="canDeleteAttachment(att)" 
+                      v-if="isCurrentlyEditing || canDeleteAttachment(att)" 
+                      type="button" 
+                      class="btn-att-action btn-att-del" 
+                      title="Xóa tệp đính kèm này"
+                      :disabled="deletingId === att.id"
+                      @click.stop="deleteAttachment(att)"
+                    >
+                      {{ deletingId === att.id ? '...' : '✕' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. KHỐI KẾT QUẢ THỰC HIỆN: Chỉ hiện nếu có kết quả hoặc có gắn file kết quả -->
+            <div 
+              v-if="(form.result && form.result.trim()) || resultAttachments.length > 0" 
+              class="form-group result-group"
+            >
+              <div class="result-header">
+                <div class="result-title-wrap">
+                  <span class="result-icon">🎯</span>
+                  <span class="result-title">Kết quả thực hiện</span>
+                </div>
+              </div>
+
+              <!-- Nội dung kết quả dạng text nếu có -->
+              <div v-if="form.result && form.result.trim()" class="result-text-box">
+                {{ form.result }}
+              </div>
+
+              <!-- Danh sách file kết quả/sản phẩm (Màu sắc và icon đồng nhất với danh sách tài liệu bên trên) -->
+              <div v-if="resultAttachments.length > 0" class="attachments-list">
+                <div 
+                  v-for="att in resultAttachments" 
+                  :key="att.id" 
+                  class="att-item"
+                >
+                  <div class="att-type-icon" :class="getFileTypeClass(att.file_name, att.content_type)">
+                    {{ getFileEmoji(att.file_name, att.content_type) }}
+                  </div>
+
+                  <div class="att-details" @click="openAttachment(att)" :title="'Mở xem: ' + att.file_name">
+                    <span class="att-name">{{ att.file_name }}</span>
+                    <div class="att-meta">
+                      <span class="att-size">{{ formatFileSize(att.file_size) }}</span>
+                      <span class="att-dot">•</span>
+                      <span class="att-uploader" :title="att.uploaded_by">{{ getAssigneeName(att.uploaded_by) }}</span>
+                      <span class="att-dot">•</span>
+                      <span class="att-date">{{ formatDateTime(att.uploaded_at) }}</span>
+                    </div>
+                  </div>
+
+                  <div class="att-btns">
+                    <button 
+                      type="button" 
+                      class="btn-att-action btn-att-open" 
+                      title="Mở trực tiếp bằng ứng dụng mặc định"
+                      :disabled="openingId === att.id"
+                      @click.stop="openAttachment(att)"
+                    >
+                      {{ openingId === att.id ? 'Đang mở...' : '👁️ Mở' }}
+                    </button>
+
+                    <button 
+                      type="button" 
+                      class="btn-att-action btn-att-download" 
+                      title="Mở liên kết tải về trình duyệt"
+                      :disabled="downloadingId === att.id"
+                      @click.stop="downloadAttachment(att)"
+                    >
+                      {{ downloadingId === att.id ? '⏳' : '⬇️ Tải' }}
+                    </button>
+
+                    <button 
+                      v-if="isCurrentlyEditing || canDeleteAttachment(att)" 
                       type="button" 
                       class="btn-att-action btn-att-del" 
                       title="Xóa tệp đính kèm này"
@@ -171,7 +254,7 @@
           <aside class="ticket-side">
             <div class="form-group">
               <label class="form-label">Độ ưu tiên</label>
-              <select v-if="isAdmin" v-model="form.priority" class="form-control">
+              <select v-if="isCurrentlyEditing" v-model="form.priority" class="form-control">
                 <option value="Urgent">Khẩn cấp</option>
                 <option value="High">Ưu tiên cao</option>
                 <option value="Medium">Trung bình</option>
@@ -186,20 +269,28 @@
 
             <div v-if="isEdit" class="form-group">
               <label class="form-label">Trạng thái</label>
-              <select v-model="form.status" class="form-control">
+              <select 
+                v-model="form.status" 
+                class="form-control"
+                @focus="onStatusFocus"
+                @change="onStatusSelectChange"
+              >
                 <option value="TODO">Chưa làm</option>
                 <option value="IN_PROGRESS">Đang làm</option>
-                <option value="REVIEW">Chờ duyệt</option>
-                <option v-if="isAdmin" value="DONE">Hoàn thành</option>
+                <option v-if="enableReview" value="REVIEW">Chờ duyệt</option>
+                <option v-if="isAdmin || !enableReview" value="DONE">Hoàn thành</option>
               </select>
-              <span v-if="!isAdmin" class="form-hint">
-                Khi xong việc, chuyển sang <strong>Chờ duyệt</strong> và đính kèm báo cáo/kết quả.
+              <span v-if="!isAdmin && enableReview" class="form-hint">
+                Khi xong việc, chuyển sang <strong>Chờ duyệt</strong>.
+              </span>
+              <span v-else-if="!isAdmin && !enableReview" class="form-hint">
+                Khi xong việc, chuyển sang <strong>Hoàn thành</strong>.
               </span>
             </div>
 
             <div class="form-group">
               <label class="form-label">Thời hạn hoàn thành</label>
-              <template v-if="isAdmin">
+              <template v-if="isCurrentlyEditing">
                 <div class="datetime-inputs">
                   <div class="datetime-field">
                     <input v-model="datePart" type="date" class="form-control" required />
@@ -227,7 +318,7 @@
                   type="button"
                   class="remind-btn"
                   :class="{ active: form.remind_before_days === d }"
-                  :disabled="!isAdmin"
+                  :disabled="!isCurrentlyEditing"
                   @click="form.remind_before_days = d"
                 >
                   {{ d }} ngày
@@ -239,9 +330,13 @@
               <span v-else class="form-hint">Chọn hạn chót để tính ngày nhắc.</span>
             </div>
 
-            <div class="form-group">
+            <div class="form-group assignee-group">
               <label class="form-label">Phân công người thực hiện</label>
-              <div v-if="isAdmin" class="assignee-select-box">
+              <div 
+                v-if="isCurrentlyEditing" 
+                class="assignee-select-box"
+                :class="{ 'is-short': assignableUsers.length <= 4 }"
+              >
                 <div
                   v-for="user in assignableUsers"
                   :key="user.email"
@@ -268,7 +363,7 @@
                 </div>
                 <div v-if="form.assigned_to.length === 0" class="text-muted">Chưa phân công</div>
               </div>
-              <span v-if="isAdmin" class="form-hint">Đã phân công: {{ form.assigned_to.length }} cán bộ</span>
+              <span v-if="isCurrentlyEditing" class="form-hint assignee-hint">Đã phân công: {{ form.assigned_to.length }} cán bộ</span>
             </div>
           </aside>
         </div>
@@ -276,13 +371,131 @@
 
       <div class="modal-footer">
         <button type="button" class="btn-secondary" @click="$emit('close')">
-          {{ isAdmin ? 'Hủy bỏ' : 'Đóng' }}
+          {{ isCurrentlyEditing ? 'Hủy bỏ' : 'Đóng' }}
         </button>
-        <button type="button" class="btn-primary" :disabled="loading || uploading" @click="handleSubmit">
+        <button 
+          v-if="isCurrentlyEditing || !isAdmin" 
+          type="button" 
+          class="btn-primary" 
+          :disabled="loading || uploading" 
+          @click="handleSubmit"
+        >
           <span v-if="loading">Đang lưu...</span>
           <span v-else-if="isAdmin">{{ isEdit ? 'Lưu thay đổi' : 'Tạo công việc' }}</span>
           <span v-else>Cập nhật tiến độ</span>
         </button>
+      </div>
+    </div>
+
+    <!-- Popup Ghi nhận Kết quả khi chuyển sang Hoàn thành (Chỉ áp dụng khi bật theo dõi kết quả) -->
+    <div v-if="showResultPrompt" class="result-prompt-backdrop" @click.self="cancelCompletionResult">
+      <div class="result-prompt-card">
+        <div class="result-prompt-head">
+          <span class="prompt-icon">🎯</span>
+          <div>
+            <h4 class="prompt-title">Ghi nhận Kết quả Hoàn thành</h4>
+            <span class="prompt-sub">{{ form.title }}</span>
+          </div>
+          <button type="button" class="btn-prompt-close" @click="cancelCompletionResult">✕</button>
+        </div>
+
+        <div class="prompt-body">
+          <label class="prompt-label">
+            Kết quả thực hiện / Sản phẩm bàn giao:
+            <span v-if="enableResult" class="text-danger">* (Bắt buộc)</span>
+            <span v-else class="text-muted">(Tùy chọn)</span>
+          </label>
+          <textarea
+            v-model="completionResultText"
+            class="prompt-textarea"
+            rows="4"
+            placeholder="Ghi nhận tóm tắt kết quả đạt được, nghiệm thu sản phẩm, văn bản bàn giao..."
+            autofocus
+          ></textarea>
+
+          <!-- Tệp kết quả đính kèm trong popup -->
+          <div class="form-group att-group prompt-att-group">
+            <div class="att-header">
+              <div class="att-title-wrap">
+                <span class="att-icon">📎</span>
+                <span class="att-title">Tệp & Tài liệu đính kèm ({{ modalResultAttachments.length }})</span>
+                <span v-if="uploadingResultModal" class="uploading-badge">
+                  ⏳ Đang tải lên...
+                </span>
+              </div>
+
+              <div class="att-actions">
+                <button 
+                  type="button" 
+                  class="btn-attach" 
+                  :disabled="uploadingResultModal"
+                  title="Chọn tệp từ máy tính để đính kèm"
+                  @click="triggerModalResultFileInput"
+                >
+                  <span v-if="uploadingResultModal">⏳ Đang tải...</span>
+                  <span v-else>➕ Thêm tệp</span>
+                </button>
+                <input 
+                  ref="modalResultFileInputRef" 
+                  type="file" 
+                  multiple 
+                  class="hidden-file-input" 
+                  style="display: none !important;"
+                  @change="handleModalResultFileUpload" 
+                />
+              </div>
+            </div>
+
+            <!-- Dropzone: Khi chưa có tệp -->
+            <div 
+              v-if="modalResultAttachments.length === 0" 
+              class="att-dropzone"
+              :class="{ 'dragging': isDraggingModalResultDrop, 'uploading': uploadingResultModal }"
+              @dragover.prevent="isDraggingModalResultDrop = true"
+              @dragleave.prevent="isDraggingModalResultDrop = false"
+              @drop.prevent="handleModalResultDrop"
+              @click="triggerModalResultFileInput"
+            >
+              <div class="dropzone-content">
+                <span class="dropzone-icon">📁</span>
+                <span class="dropzone-text">
+                  {{ uploadingResultModal ? 'Đang tải tệp lên Cloudflare R2...' : 'Kéo & thả tệp vào đây hoặc bấm để chọn tệp' }}
+                </span>
+                <span class="dropzone-sub">(Hỗ trợ PDF, Word, Excel, Hình ảnh, Zip...)</span>
+              </div>
+            </div>
+
+            <!-- Danh sách tệp đã tải lên -->
+            <div v-else class="attachments-list">
+              <div v-for="att in modalResultAttachments" :key="att.id" class="att-item">
+                <div class="att-type-icon" :class="getFileTypeClass(att.file_name, att.content_type)">
+                  {{ getFileEmoji(att.file_name, att.content_type) }}
+                </div>
+                <div class="att-details">
+                  <span class="att-name" :title="att.file_name">{{ att.file_name }}</span>
+                  <div class="att-meta">
+                    <span class="att-size">{{ formatFileSize(att.file_size) }}</span>
+                  </div>
+                </div>
+                <div class="att-btns">
+                  <button 
+                    type="button" 
+                    class="btn-att-action btn-att-del" 
+                    title="Xóa tệp này"
+                    @click.stop="removeModalResultAttachment(att)"
+                  >✕</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="prompt-foot">
+          <button type="button" class="btn-prompt-cancel" @click="cancelCompletionResult">Hủy</button>
+          <button type="button" class="btn-prompt-confirm" @click="confirmCompletionResult">
+            ✓ Xác nhận Hoàn thành
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -299,6 +512,10 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  modalMode: {
+    type: String,
+    default: 'edit',
+  },
   users: {
     type: Array,
     default: () => [],
@@ -306,6 +523,10 @@ const props = defineProps({
   currentUser: {
     type: Object,
     required: true,
+  },
+  currentTeam: {
+    type: Object,
+    default: null,
   },
   currentTeamId: {
     type: String,
@@ -325,7 +546,19 @@ const emit = defineEmits(['close', 'save', 'attachment-changed']);
 
 const isEdit = Boolean(props.taskData && props.taskData.id);
 const isAdmin = computed(() => props.currentUser.role === 'admin' || props.currentUser.role === 'super_admin');
+const localEdit = ref(false);
+const isCurrentlyEditing = computed(() => {
+  if (!isAdmin.value) return false;
+  if (props.modalMode === 'create' || props.modalMode === 'edit') return true;
+  return localEdit.value;
+});
+const enableReview = computed(() => props.currentTeam?.enable_review_step !== false);
+const enableResult = computed(() => props.currentTeam?.enable_result_column !== false);
 const loading = ref(false);
+
+const prevStatus = ref('TODO');
+const showResultPrompt = ref(false);
+const completionResultText = ref('');
 
 const assignableUsers = computed(() => {
   return (props.users || []).filter((u) => u.role !== 'super_admin');
@@ -336,6 +569,21 @@ const timePart = ref('17:00');
 
 // Dedicated reactive attachments array for real-time reactivity
 const attachments = ref([]);
+const documentAttachments = computed(() => {
+  return attachments.value.filter((a) => !a.category || a.category === 'document');
+});
+const resultAttachments = computed(() => {
+  return attachments.value.filter((a) => a.category === 'result');
+});
+
+const modalResultAttachments = ref([]);
+const uploadingResultModal = ref(false);
+const modalResultFileInputRef = ref(null);
+const isDraggingModalResultDrop = ref(false);
+
+function triggerModalResultFileInput() {
+  modalResultFileInputRef.value?.click();
+}
 const storageConfigured = ref(true);
 const uploading = ref(false);
 const uploadProgressText = ref('');
@@ -354,6 +602,7 @@ const form = reactive({
   assigned_to: [],
   remind_before_days: 2,
   workspace_id: props.taskData?.workspace_id || props.currentWorkspaceId || '',
+  result: '',
 });
 
 function setDefaultDueDate() {
@@ -371,10 +620,12 @@ onMounted(async () => {
     form.description = props.taskData.description || '';
     form.priority = props.taskData.priority || 'Medium';
     form.status = props.taskData.status || 'TODO';
+    prevStatus.value = form.status;
     form.workspace_id = props.taskData.workspace_id || props.currentWorkspaceId || '';
     const validEmails = new Set(assignableUsers.value.map((u) => u.email));
     form.assigned_to = (props.taskData.assigned_to || []).filter((email) => validEmails.has(email));
     form.remind_before_days = props.taskData.remind_before_days || 2;
+    form.result = props.taskData.result || '';
     attachments.value = [...(props.taskData.attachments || [])];
 
     if (props.taskData.due_date) {
@@ -514,7 +765,7 @@ function canDeleteAttachment(att) {
   return isAdmin.value || props.currentUser.email === att.uploaded_by;
 }
 
-async function uploadSingleFile(file) {
+async function uploadSingleFile(file, category = 'document') {
   const MAX_SIZE = 100 * 1024 * 1024; // 100MB
   if (file.size > MAX_SIZE) {
     throw new Error(`Tệp "${file.name}" vượt quá giới hạn 100MB`);
@@ -535,7 +786,8 @@ async function uploadSingleFile(file) {
     file.name,
     bytes,
     file.type || 'application/octet-stream',
-    props.currentUser.email
+    props.currentUser.email,
+    category
   );
 
   // 1. Immediately update local attachments
@@ -551,6 +803,59 @@ async function uploadSingleFile(file) {
     taskId,
     attachments: attachments.value,
   });
+
+  return newAttachment;
+}
+
+async function handleModalResultFileUpload(e) {
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
+
+  uploadingResultModal.value = true;
+  try {
+    for (const file of files) {
+      const att = await uploadSingleFile(file, 'result');
+      if (!modalResultAttachments.value.some((a) => a.id === att.id)) {
+        modalResultAttachments.value.push(att);
+      }
+    }
+  } catch (err) {
+    alert('Lỗi tải tệp kết quả: ' + (err.message || err));
+  } finally {
+    uploadingResultModal.value = false;
+    if (modalResultFileInputRef.value) {
+      modalResultFileInputRef.value.value = '';
+    }
+  }
+}
+
+async function handleModalResultDrop(e) {
+  isDraggingModalResultDrop.value = false;
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (files.length === 0) return;
+
+  uploadingResultModal.value = true;
+  try {
+    for (const file of files) {
+      const att = await uploadSingleFile(file, 'result');
+      if (!modalResultAttachments.value.some((a) => a.id === att.id)) {
+        modalResultAttachments.value.push(att);
+      }
+    }
+  } catch (err) {
+    alert('Lỗi tải tệp kết quả: ' + (err.message || err));
+  } finally {
+    uploadingResultModal.value = false;
+  }
+}
+
+async function removeModalResultAttachment(att) {
+  try {
+    await deleteAttachment(att);
+    modalResultAttachments.value = modalResultAttachments.value.filter((a) => a.id !== att.id);
+  } catch (err) {
+    alert('Lỗi xóa tệp kết quả: ' + (err.message || err));
+  }
 }
 
 async function handleFileUpload(e) {
@@ -679,7 +984,43 @@ async function deleteAttachment(att) {
   }
 }
 
+function onStatusFocus() {
+  prevStatus.value = form.status;
+}
+
+function onStatusSelectChange() {
+  if (form.status === 'DONE') {
+    completionResultText.value = form.result || '';
+    modalResultAttachments.value = attachments.value.filter((a) => a.category === 'result');
+    showResultPrompt.value = true;
+  } else {
+    prevStatus.value = form.status;
+  }
+}
+
+function confirmCompletionResult() {
+  const res = completionResultText.value.trim();
+  if (enableResult.value && !res) {
+    alert('Vui lòng nhập kết quả thực hiện trước khi xác nhận hoàn thành!');
+    return;
+  }
+  form.result = res;
+  prevStatus.value = 'DONE';
+  showResultPrompt.value = false;
+}
+
+function cancelCompletionResult() {
+  form.status = 'IN_PROGRESS'; // Bắt buộc trở về trạng thái Đang làm theo yêu cầu
+  showResultPrompt.value = false;
+}
+
 function handleSubmit() {
+  if (form.status === 'DONE' && enableResult.value && (!form.result || !form.result.trim())) {
+    alert('Vui lòng nhập kết quả thực hiện trước khi hoàn thành công việc!');
+    completionResultText.value = '';
+    showResultPrompt.value = true;
+    return;
+  }
   if (isAdmin.value) {
     if (!form.title.trim()) return;
 
@@ -700,12 +1041,14 @@ function handleSubmit() {
       attachments: attachments.value,
       team_id: props.taskData?.team_id || props.currentTeamId || null,
       workspace_id: form.workspace_id || props.taskData?.workspace_id || props.currentWorkspaceId || null,
+      result: form.result ? form.result.trim() : '',
     });
   } else {
     loading.value = true;
     emit('save', {
       status: form.status,
       attachments: attachments.value,
+      result: form.result ? form.result.trim() : '',
     });
   }
 }
@@ -723,6 +1066,8 @@ function handleSubmit() {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .ticket-layout {
@@ -761,10 +1106,19 @@ function handleSubmit() {
 }
 
 .ticket-side {
-  padding: 16px 16px 12px;
+  padding: 16px 16px 14px;
   background: var(--bg-sub);
-  overflow-y: auto;
+  overflow: hidden;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.ticket-side > .form-group:not(.assignee-group) {
+  flex-shrink: 0;
 }
 
 .required {
@@ -800,6 +1154,51 @@ function handleSubmit() {
   height: 100%;
   flex: 1;
   min-height: 400px;
+}
+
+/* ==========================================
+   RESULT FIELD STYLING (Đồng nhất với Tài liệu & Nội dung bên trên)
+========================================== */
+.result-group {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-sub);
+  padding-top: 14px;
+  flex-shrink: 0;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.result-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.result-icon {
+  font-size: 15px;
+}
+
+.result-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-ink);
+}
+
+.result-text-box {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-ink);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
 }
 
 /* ==========================================
@@ -994,6 +1393,12 @@ function handleSubmit() {
 .att-type-icon.file-image { background-color: #faf5ff; }
 .att-type-icon.file-zip { background-color: #fffbeb; }
 
+[data-theme="dark"] .att-type-icon.file-pdf { background-color: rgba(239, 68, 68, 0.2); }
+[data-theme="dark"] .att-type-icon.file-word { background-color: rgba(59, 130, 246, 0.2); }
+[data-theme="dark"] .att-type-icon.file-excel { background-color: rgba(16, 185, 129, 0.2); }
+[data-theme="dark"] .att-type-icon.file-image { background-color: rgba(168, 85, 247, 0.2); }
+[data-theme="dark"] .att-type-icon.file-zip { background-color: rgba(245, 158, 11, 0.2); }
+
 .att-details {
   flex: 1;
   min-width: 0;
@@ -1128,12 +1533,50 @@ function handleSubmit() {
   color: var(--text-ink);
 }
 
+.assignee-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.assignee-group .form-label {
+  flex-shrink: 0;
+}
+
 .assignee-select-box {
-  max-height: 180px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background-color: var(--bg-surface);
+  scrollbar-width: thin;
+}
+
+.assignee-select-box.is-short {
+  flex: 0 1 auto;
+}
+
+.assignee-select-box::-webkit-scrollbar {
+  width: 5px;
+}
+.assignee-select-box::-webkit-scrollbar-track {
+  background: transparent;
+}
+.assignee-select-box::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: var(--radius-pill);
+}
+.assignee-select-box::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-sub);
+}
+
+.assignee-hint {
+  flex-shrink: 0;
+  margin-top: 4px;
 }
 
 .assignee-checkbox-item {
@@ -1202,6 +1645,9 @@ function handleSubmit() {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  overflow-y: auto;
+  max-height: 100%;
+  flex: 0 1 auto;
 }
 
 .view-assignee-chip {
@@ -1216,5 +1662,147 @@ function handleSubmit() {
 
 .text-muted {
   color: var(--text-sub);
+}
+
+/* Result Prompt Dialog */
+.result-prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.result-prompt-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: min(540px, 94vw);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.result-prompt-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.prompt-icon {
+  font-size: 22px;
+}
+
+.prompt-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-ink);
+  margin-bottom: 2px;
+}
+
+.prompt-sub {
+  font-size: 12px;
+  color: var(--text-sub);
+  display: block;
+}
+
+.btn-prompt-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+.prompt-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-ink);
+}
+
+.prompt-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  color: var(--text-ink);
+  font-size: 13px;
+  resize: vertical;
+}
+.prompt-textarea:focus {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.prompt-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background-color: var(--bg-sub);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.btn-prompt-cancel {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  color: var(--text-ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-prompt-confirm {
+  padding: 6px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: #16a34a;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Header right tools & switch edit button */
+.header-right-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-switch-edit {
+  padding: 4px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background-color: var(--bg-surface);
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-switch-edit:hover {
+  background-color: var(--accent-sub);
+  border-color: var(--accent);
+}
+
+.hidden-file-input {
+  display: none !important;
 }
 </style>

@@ -67,7 +67,20 @@
         >
           ⬅ Chờ
         </button>
+
+        <!-- If Team disabled REVIEW step: Can complete directly! -->
         <button 
+          v-if="!enableReview"
+          class="btn-flow btn-flow-success"
+          title="Đánh dấu hoàn thành công việc"
+          @click.stop="$emit('request-complete', task)"
+        >
+          ✓ Hoàn thành ➔
+        </button>
+
+        <!-- If Team requires REVIEW: Send to review -->
+        <button 
+          v-else
           class="btn-flow btn-flow-warning"
           title="Gửi báo cáo chờ quản trị duyệt"
           @click.stop="moveStatus('REVIEW')"
@@ -90,7 +103,7 @@
           <button 
             class="btn-flow btn-flow-success"
             title="Phê duyệt hoàn thành công việc"
-            @click.stop="$emit('approve', task.id)"
+            @click.stop="$emit('request-complete', task)"
           >
             ✓ Duyệt
           </button>
@@ -110,9 +123,8 @@
 
       <!-- Status: DONE -->
       <template v-else-if="task.status === 'DONE'">
-        <span class="done-tag">✓ Hoàn thành</span>
         <button 
-          v-if="canManage"
+          v-if="canManage || !enableReview"
           class="btn-flow"
           title="Mở lại công việc"
           @click.stop="moveStatus('IN_PROGRESS')"
@@ -140,9 +152,17 @@ const props = defineProps({
     type: Object,
     required: true,
   },
+  enableReview: {
+    type: Boolean,
+    default: true,
+  },
+  enableResult: {
+    type: Boolean,
+    default: true,
+  },
 });
 
-const emit = defineEmits(['edit', 'delete', 'approve', 'status-change', 'view']);
+const emit = defineEmits(['edit', 'delete', 'approve', 'status-change', 'view', 'request-complete']);
 
 const canManage = computed(() => props.currentUser?.role === 'admin' || props.currentUser?.role === 'super_admin');
 
@@ -437,6 +457,10 @@ function moveStatus(newStatus) {
   padding-top: 5px;
   border-top: 1px solid var(--border-sub);
   margin-top: 1px;
+}
+
+.card-workflow:empty {
+  display: none;
 }
 
 .btn-flow {

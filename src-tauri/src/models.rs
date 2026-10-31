@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TeamDto {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -16,6 +20,10 @@ pub struct TeamDto {
     pub workspace_count: usize,
     #[serde(default)]
     pub task_count: usize,
+    #[serde(default = "default_true")]
+    pub enable_review_step: bool,
+    #[serde(default = "default_true")]
+    pub enable_result_column: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -47,6 +55,8 @@ pub struct UserSafe {
     pub team_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_title: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -60,6 +70,8 @@ pub struct TaskAttachment {
     pub uploaded_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -84,6 +96,12 @@ pub struct TaskDto {
     pub reminded_at: Option<String>,
     #[serde(default)]
     pub attachments: Vec<TaskAttachment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

@@ -21,7 +21,7 @@
           <tr>
             <th style="width: 200px;">Cán bộ</th>
             <th style="min-width: 200px;">Email</th>
-            <th style="width: 150px;">Đội nhóm (Team)</th>
+            <th style="width: 170px;">Tổ nghiệp vụ</th>
             <th style="width: 140px;">Vai trò</th>
             <th style="width: 130px;">Trạng thái</th>
             <th style="width: 120px;">Ngày tham gia</th>
@@ -44,10 +44,10 @@
             <!-- Email -->
             <td class="email-cell">{{ user.email }}</td>
 
-            <!-- Team Name -->
+            <!-- Tổ nghiệp vụ (Chức danh) -->
             <td>
-              <span class="team-chip">
-                {{ getTeamName(user.team_id) }}
+              <span class="job-title-chip">
+                {{ user.job_title || '—' }}
               </span>
             </td>
 
@@ -273,14 +273,15 @@ function formatDate(dateStr) {
   font-size: 12px;
 }
 
-.team-chip {
+.team-chip, .job-title-chip {
   display: inline-block;
-  padding: 2px 8px;
-  font-size: 11.5px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 600;
   border-radius: var(--radius-sm);
   background-color: var(--bg-sub);
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text-ink);
 }
 
 .badge {

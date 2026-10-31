@@ -6,10 +6,10 @@
         <!-- Add Task Button (Admin or Super Admin) -->
         <button 
           v-if="canManage"
-          class="btn-success"
+          class="btn-success btn-add"
           @click="$emit('add-task')"
         >
-          ➕ Thêm Công Việc Mới
+          ➕ Thêm Mới
         </button>
 
         <!-- Status Filter -->
@@ -817,6 +817,28 @@ function isOverdue(task) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.btn-add {
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  background-color: #05a34c; /* Microsoft Excel Green */
+  color: white;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.btn-add:hover:not(:disabled) {
+  background-color: #0e6b37;
+}
+
+.btn-add:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .filter-group {

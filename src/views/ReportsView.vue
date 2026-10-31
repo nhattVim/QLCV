@@ -88,7 +88,6 @@
               v-for="(task, index) in filteredTasks" 
               :key="task.id"
               class="report-row"
-              @click="$emit('view-task', task)"
             >
               <!-- 1. STT -->
               <td class="td-stt">{{ index + 1 }}</td>
@@ -487,7 +486,7 @@ async function exportToExcel() {
   gap: 6px;
   padding: 6px 14px;
   border-radius: var(--radius-sm);
-  background-color: #107c41; /* Microsoft Excel Green */
+  background-color: #05a34c; /* Microsoft Excel Green */
   color: white;
   font-size: 12.5px;
   font-weight: 700;
@@ -613,6 +612,7 @@ async function exportToExcel() {
 }
 
 .report-row {
+  cursor: default;
   transition: background-color 0.1s;
 }
 
